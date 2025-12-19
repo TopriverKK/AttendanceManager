@@ -50,6 +50,7 @@ const defaultHolidayIcs =
   'https://www.google.com/calendar/ical/ja.japanese%23holiday%40group.v.calendar.google.com/public/basic.ics';
 
 const storageKey = 'attendance-dashboard-state';
+const remoteStateEndpoint = '/api/state';
 
 const attendanceKey = (date: string, employeeId: string) => `${date}:${employeeId}`;
 
@@ -171,19 +172,75 @@ function ensureAttendanceForEmployeesForDate(
 
 function usePersistentState() {
   const lastSavedRef = useRef('');
+  const saveTimerRef = useRef<number | undefined>(undefined);
+  const pendingSaveRef = useRef(false);
+  const lastLocalChangeAtRef = useRef<number>(0);
+
+  const normalizePersisted = useCallback((parsed: PersistedState) => {
+    const migrated = migrateAttendanceToDatedKeys(parsed.attendance);
+    const today = todayKey();
+    return {
+      employees: parsed.employees,
+      attendance: ensureAttendanceForEmployeesForDate(parsed.employees, migrated, today),
+      holidayUrl: parsed.holidayUrl,
+    } satisfies PersistedState;
+  }, []);
+
+  const loadRemote = useCallback(async () => {
+    try {
+      const res = await fetch(remoteStateEndpoint, { method: 'GET' });
+      if (!res.ok) return;
+      const data = (await res.json()) as { state: PersistedState | null };
+      if (!data?.state) return;
+
+      const normalized = normalizePersisted(data.state);
+      const serialized = JSON.stringify(normalized);
+
+      setState((prev) => {
+        const prevSerialized = JSON.stringify(prev);
+        if (prevSerialized === serialized) return prev;
+        // If the user just changed something locally, avoid clobbering.
+        if (Date.now() - lastLocalChangeAtRef.current < 5000) return prev;
+        lastSavedRef.current = serialized;
+        localStorage.setItem(storageKey, serialized);
+        return normalized;
+      });
+    } catch (err) {
+      console.warn('remote load error', err);
+    }
+  }, [normalizePersisted]);
+
+  const scheduleRemoteSave = useCallback(
+    (next: PersistedState) => {
+      if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+      pendingSaveRef.current = true;
+      saveTimerRef.current = window.setTimeout(async () => {
+        try {
+          const res = await fetch(remoteStateEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ state: next }),
+          });
+          if (!res.ok) {
+            console.warn('remote save failed', await res.text());
+          }
+        } catch (err) {
+          console.warn('remote save error', err);
+        } finally {
+          pendingSaveRef.current = false;
+        }
+      }, 500);
+    },
+    [],
+  );
+
   const [state, setState] = useState<PersistedState>(() => {
     const stored = localStorage.getItem(storageKey);
     if (stored) {
       try {
         const parsed = JSON.parse(stored) as PersistedState;
         if (parsed.attendance && parsed.holidayUrl && parsed.employees) {
-          const migrated = migrateAttendanceToDatedKeys(parsed.attendance);
-          const today = todayKey();
-          const normalized: PersistedState = {
-            employees: parsed.employees,
-            attendance: ensureAttendanceForEmployeesForDate(parsed.employees, migrated, today),
-            holidayUrl: parsed.holidayUrl,
-          };
+          const normalized = normalizePersisted(parsed);
           lastSavedRef.current = JSON.stringify(normalized);
           return normalized;
         }
@@ -204,8 +261,10 @@ function usePersistentState() {
   useEffect(() => {
     const serialized = JSON.stringify(state);
     lastSavedRef.current = serialized;
+    lastLocalChangeAtRef.current = Date.now();
     localStorage.setItem(storageKey, serialized);
-  }, [state]);
+    scheduleRemoteSave(state);
+  }, [scheduleRemoteSave, state]);
 
   // Note: keep history. We only ensure today's records exist when needed.
 
@@ -216,13 +275,7 @@ function usePersistentState() {
       const parsed = JSON.parse(stored) as PersistedState;
       if (parsed.attendance && parsed.holidayUrl && parsed.employees) {
         setState((prev) => {
-          const migrated = migrateAttendanceToDatedKeys(parsed.attendance);
-          const today = todayKey();
-          const next: PersistedState = {
-            employees: parsed.employees,
-            attendance: ensureAttendanceForEmployeesForDate(parsed.employees, migrated, today),
-            holidayUrl: parsed.holidayUrl,
-          };
+          const next = normalizePersisted(parsed);
           const currentString = JSON.stringify(prev);
           const nextString = JSON.stringify(next);
           if (currentString === nextString) return prev;
@@ -233,7 +286,7 @@ function usePersistentState() {
     } catch (err) {
       console.warn('refresh parse error', err);
     }
-  }, []);
+  }, [normalizePersisted]);
 
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
@@ -242,6 +295,17 @@ function usePersistentState() {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, [refreshFromStorage]);
+
+  useEffect(() => {
+    // Load shared state from server on boot.
+    void loadRemote();
+    // Poll periodically so other devices' updates show up.
+    const id = window.setInterval(() => {
+      if (pendingSaveRef.current) return;
+      void loadRemote();
+    }, 60_000);
+    return () => window.clearInterval(id);
+  }, [loadRemote]);
 
   return [state, setState, refreshFromStorage] as const;
 }

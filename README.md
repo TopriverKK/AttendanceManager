@@ -56,6 +56,20 @@ npm run build
 
 ※ SPAとしてのフォールバック用に `vercel.json` を同梱しています。
 
+## 共有データベース（Vercel Postgres）
+デフォルトではブラウザのLocalStorageに保存されますが、Vercel Postgresを接続すると全端末で共通の状態を保存できます。
+
+### Vercelでの設定
+1. Vercel Dashboard → 対象プロジェクト → Storage → Postgres を作成
+2. 作成したPostgresをプロジェクトに Connect（環境変数 `POSTGRES_URL` などが自動で設定されます）
+3. Redeploy（再デプロイ）
+
+### 動作
+- 共有状態の取得: `GET /api/state`
+- 共有状態の保存: `POST /api/state`
+
+※ 現状は「全員で1つの共有状態（default）」を保存するMVPです。ログイン/権限分離が必要なら追加実装が必要です。
+
 ### Netlify
 1. GitHubにこのリポジトリをPush
 2. Netlifyで「Add new site」→「Import an existing project」
