@@ -175,6 +175,7 @@ function usePersistentState() {
   const saveTimerRef = useRef<number | undefined>(undefined);
   const pendingSaveRef = useRef(false);
   const lastLocalChangeAtRef = useRef<number>(0);
+  const lastAppliedRemoteRef = useRef<string>('');
 
   const normalizePersisted = useCallback((parsed: PersistedState) => {
     const migrated = migrateAttendanceToDatedKeys(parsed.attendance);
@@ -201,6 +202,9 @@ function usePersistentState() {
         if (prevSerialized === serialized) return prev;
         // If the user just changed something locally, avoid clobbering.
         if (Date.now() - lastLocalChangeAtRef.current < 5000) return prev;
+
+        // Mark as remote-applied so we don't immediately POST it back.
+        lastAppliedRemoteRef.current = serialized;
         lastSavedRef.current = serialized;
         localStorage.setItem(storageKey, serialized);
         return normalized;
@@ -223,6 +227,9 @@ function usePersistentState() {
           });
           if (!res.ok) {
             console.warn('remote save failed', await res.text());
+          } else {
+            // Treat this state as the current remote snapshot to avoid echo loops.
+            lastAppliedRemoteRef.current = JSON.stringify(next);
           }
         } catch (err) {
           console.warn('remote save error', err);
@@ -263,7 +270,10 @@ function usePersistentState() {
     lastSavedRef.current = serialized;
     lastLocalChangeAtRef.current = Date.now();
     localStorage.setItem(storageKey, serialized);
-    scheduleRemoteSave(state);
+    // If this state came from the server, don't POST it back immediately.
+    if (serialized !== lastAppliedRemoteRef.current) {
+      scheduleRemoteSave(state);
+    }
   }, [scheduleRemoteSave, state]);
 
   // Note: keep history. We only ensure today's records exist when needed.
@@ -299,12 +309,27 @@ function usePersistentState() {
   useEffect(() => {
     // Load shared state from server on boot.
     void loadRemote();
+    // Sync when the tab becomes active.
+    const onFocus = () => {
+      if (pendingSaveRef.current) return;
+      void loadRemote();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') onFocus();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibility);
+
     // Poll periodically so other devices' updates show up.
     const id = window.setInterval(() => {
       if (pendingSaveRef.current) return;
       void loadRemote();
-    }, 60_000);
-    return () => window.clearInterval(id);
+    }, 10_000);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.clearInterval(id);
+    };
   }, [loadRemote]);
 
   return [state, setState, refreshFromStorage] as const;
