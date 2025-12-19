@@ -7,20 +7,32 @@ function isInvalidConnectionStringError(err) {
   return message.includes('invalid_connection_string');
 }
 
+function pickFirst(...values) {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
 async function withDb(fn) {
   // Prefer pooled connections (best for serverless). If the env provides a direct
   // connection string, @vercel/postgres will throw `invalid_connection_string`.
   try {
-    const pooled = process.env.POSTGRES_URL;
+    const pooled = pickFirst(process.env.POSTGRES_URL, process.env.DATABASE_URL, process.env.PRISMA_DATABASE_URL);
     const pool = pooled ? createPool({ connectionString: pooled }) : createPool();
     return await fn(pool);
   } catch (err) {
     if (!isInvalidConnectionStringError(err)) throw err;
 
-    const direct = process.env.POSTGRES_URL_NON_POOLING ?? process.env.POSTGRES_URL;
+    const direct = pickFirst(
+      process.env.POSTGRES_URL_NON_POOLING,
+      process.env.POSTGRES_URL,
+      process.env.DATABASE_URL,
+      process.env.PRISMA_DATABASE_URL,
+    );
     if (!direct) {
       throw new Error(
-        "Missing Postgres connection string. Set POSTGRES_URL (pooled) and/or POSTGRES_URL_NON_POOLING (direct) in this deployment's environment variables.",
+        "Missing Postgres connection string. Set one of POSTGRES_URL / POSTGRES_URL_NON_POOLING / DATABASE_URL / PRISMA_DATABASE_URL for this deployment.",
       );
     }
 
