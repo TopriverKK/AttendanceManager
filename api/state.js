@@ -11,12 +11,20 @@ async function withDb(fn) {
   // Prefer pooled connections (best for serverless). If the env provides a direct
   // connection string, @vercel/postgres will throw `invalid_connection_string`.
   try {
-    const pool = createPool();
+    const pooled = process.env.POSTGRES_URL;
+    const pool = pooled ? createPool({ connectionString: pooled }) : createPool();
     return await fn(pool);
   } catch (err) {
     if (!isInvalidConnectionStringError(err)) throw err;
 
-    const client = createClient();
+    const direct = process.env.POSTGRES_URL_NON_POOLING ?? process.env.POSTGRES_URL;
+    if (!direct) {
+      throw new Error(
+        "Missing Postgres connection string. Set POSTGRES_URL (pooled) and/or POSTGRES_URL_NON_POOLING (direct) in this deployment's environment variables.",
+      );
+    }
+
+    const client = createClient({ connectionString: direct });
     await client.connect();
     try {
       return await fn(client);
