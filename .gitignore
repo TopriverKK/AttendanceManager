@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.vite/
+*.log
+
+# env
+.env
+.env.*
+
+# editors / OS
+.DS_Store
+Thumbs.db
+.vscode/
+
+# TypeScript build cache
+tsconfig.tsbuildinfo
