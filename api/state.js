@@ -63,6 +63,45 @@ function json(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
+function redactString(value) {
+  if (typeof value !== 'string') return value;
+  // Redact URLs that might embed credentials.
+  return value.replace(/(postgres(?:ql)?:\/\/)([^\s@]+)@/gi, '$1***@');
+}
+
+function safeSerializeError(err) {
+  const seen = new WeakSet();
+  const scrub = (input) => {
+    if (input == null) return input;
+    if (typeof input === 'string') return redactString(input);
+    if (typeof input !== 'object') return input;
+    if (seen.has(input)) return '[Circular]';
+    seen.add(input);
+
+    const out = Array.isArray(input) ? [] : {};
+    for (const [k, v] of Object.entries(input)) {
+      const key = String(k).toLowerCase();
+      if (key.includes('password') || key.includes('secret') || key.includes('token') || key.includes('connection') || key.includes('url')) {
+        out[k] = '***';
+        continue;
+      }
+      out[k] = scrub(v);
+    }
+    return out;
+  };
+
+  if (err instanceof Error) {
+    return scrub({
+      name: err.name,
+      message: redactString(err.message),
+      // Some libraries attach extra details.
+      cause: err.cause,
+    });
+  }
+
+  return scrub(err);
+}
+
 export default async function handler(req, res) {
   try {
     await withDb(async (db) => {
@@ -105,7 +144,8 @@ export default async function handler(req, res) {
     });
   } catch (err) {
     // If Postgres isn't configured yet, this is the most common failure.
-    const message = err instanceof Error ? err.message : String(err);
-    return json(res, 500, { error: 'Internal Server Error', message });
+    const details = safeSerializeError(err);
+    const message = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Unexpected error';
+    return json(res, 500, { error: 'Internal Server Error', message: redactString(message), details });
   }
 }
