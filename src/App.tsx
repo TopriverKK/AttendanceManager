@@ -1143,35 +1143,6 @@ function App() {
             <SummaryCard label="退勤済" value={statusCounts.done} tone="gray" />
           </section>
 
-          <section className="holiday-panel">
-            <div>
-              <p className="panel-title">休日カレンダー (Google 公開 ICS)</p>
-              <p className="panel-desc">祝日(全国)と、会社の所定休日(任意)の公開ICSを設定できます。</p>
-            </div>
-            <div className="holiday-inputs-column">
-              <div className="holiday-inputs">
-                <input
-                  className="text-input"
-                  value={state.holidayUrl}
-                  onChange={(e) => setState((prev) => ({ ...prev, holidayUrl: e.target.value }))}
-                  placeholder="祝日ICS: https://...ics"
-                />
-                <span className="pill small">{holidayState.status === 'loading' ? '同期中' : '更新済'}</span>
-                <span className="pill small subtle">個人カレンダー: {calendarStatus === 'loading' ? '同期中' : '更新済'}</span>
-              </div>
-              <div className="holiday-inputs">
-                <input
-                  className="text-input"
-                  value={state.companyHolidayUrl}
-                  onChange={(e) => setState((prev) => ({ ...prev, companyHolidayUrl: e.target.value }))}
-                  placeholder="所定休日ICS(任意): https://...ics"
-                />
-                <span className="pill small">{companyHolidayState.status === 'loading' ? '同期中' : '更新済'}</span>
-                <span className="pill small subtle">所定休日</span>
-              </div>
-            </div>
-          </section>
-
           <section className="cards-grid">
             {state.employees.map((emp) => {
               const attFound = attendanceList.find((a) => a.employeeId === emp.id);
@@ -1272,6 +1243,35 @@ function App() {
 
       {view === 'settings' && (
         <section className="settings">
+          <section className="holiday-panel">
+            <div>
+              <p className="panel-title">休日カレンダー (Google 公開 ICS)</p>
+              <p className="panel-desc">祝日(全国)と、会社の所定休日(任意)の公開ICSを設定できます。</p>
+            </div>
+            <div className="holiday-inputs-column">
+              <div className="holiday-inputs">
+                <input
+                  className="text-input"
+                  value={state.holidayUrl}
+                  onChange={(e) => setState((prev) => ({ ...prev, holidayUrl: e.target.value }))}
+                  placeholder="祝日ICS: https://...ics"
+                />
+                <span className="pill small">{holidayState.status === 'loading' ? '同期中' : '更新済'}</span>
+                <span className="pill small subtle">個人カレンダー: {calendarStatus === 'loading' ? '同期中' : '更新済'}</span>
+              </div>
+              <div className="holiday-inputs">
+                <input
+                  className="text-input"
+                  value={state.companyHolidayUrl}
+                  onChange={(e) => setState((prev) => ({ ...prev, companyHolidayUrl: e.target.value }))}
+                  placeholder="所定休日ICS(任意): https://...ics"
+                />
+                <span className="pill small">{companyHolidayState.status === 'loading' ? '同期中' : '更新済'}</span>
+                <span className="pill small subtle">所定休日</span>
+              </div>
+            </div>
+          </section>
+
           <div className="settings-header">
             <div>
               <p className="panel-title">従業員情報・個人カレンダー</p>
