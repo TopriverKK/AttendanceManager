@@ -1187,21 +1187,35 @@ function App() {
                     <div className="next-event">
                       <span className="label">現在:</span>
                       <span className="value" style={{ fontSize: '20px' }}>
-                        {currentEvent
-                          ? `${formatDateTime(currentEvent.start)}${currentEvent.end ? `-${formatDateTime(currentEvent.end)}` : ''} ${currentEvent.summary || ''}`
-                          : emp.calendarUrl
-                            ? 'なし'
-                            : '未設定'}
+                        {currentEvent ? (
+                          <>
+                            {formatDateTime(currentEvent.start)}
+                            {currentEvent.end && `-${formatDateTime(currentEvent.end)}`}
+                            <br />
+                            {currentEvent.summary || '(タイトルなし)'}
+                          </>
+                        ) : emp.calendarUrl ? (
+                          'なし'
+                        ) : (
+                          '未設定'
+                        )}
                       </span>
                     </div>
                     <div className="next-event" style={{ fontSize: '20px' }}>
                       <span className="label">次:</span>
                       <span className="value" style={{ fontSize: '20px' }}>
-                        {nextEvent
-                          ? `${formatDateTime(nextEvent.start)}${nextEvent.end ? `-${formatDateTime(nextEvent.end)}` : ''} ${nextEvent.summary || ''}`
-                          : emp.calendarUrl
-                            ? 'なし'
-                            : '未設定'}
+                        {nextEvent ? (
+                          <>
+                            {formatDateTime(nextEvent.start)}
+                            {nextEvent.end && `-${formatDateTime(nextEvent.end)}`}
+                            <br />
+                            {nextEvent.summary || '(タイトルなし)'}
+                          </>
+                        ) : emp.calendarUrl ? (
+                          'なし'
+                        ) : (
+                          '未設定'
+                        )}
                       </span>
                     </div>
                     <button onClick={() => handleClockOut(emp.id)} disabled={att.status === 'done' || att.status === 'not-clocked'} style={{ fontSize: '24px' }}>
