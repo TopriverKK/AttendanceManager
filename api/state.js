@@ -64,7 +64,8 @@ function safeSerializeError(err) {
 async function getBlobState() {
   const tryHeadThenFetch = async (pathname) => {
     const blobInfo = await head(pathname);
-    const fetchUrl = blobInfo.downloadUrl || blobInfo.url;
+    // Use the public blob URL for reads. In some configurations `downloadUrl` can return 403.
+    const fetchUrl = blobInfo.url;
     const response = await fetch(fetchUrl, { cache: 'no-store' });
     if (!response.ok) {
       throw new Error(`Failed to fetch blob: ${response.status} ${response.statusText}`);
