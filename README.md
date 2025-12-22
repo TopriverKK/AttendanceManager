@@ -77,6 +77,12 @@ npm run build
 - 共有状態の取得: `GET /api/state`
 - 共有状態の保存: `POST /api/state`
 
+## ICS取得（CORS対策）
+祝日ICS/個人ICSはブラウザのCORS制限を避けるため、同一オリジンのプロキシ経由で取得します。
+
+- 取得: `GET /api/ics?url=...`
+- セキュリティのため、`https` のみ + Google Calendar系ホストのみ許可しています（必要なら `api/ics.js` の許可リストを拡張してください）。
+
 ※ 現状は「全員で1つの共有状態」を保存するMVPです。ログイン/権限分離が必要なら追加実装が必要です。
 
 ### Netlify
