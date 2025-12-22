@@ -80,16 +80,50 @@ async function getBlobState() {
     }
   };
 
+  const withCacheBust = (inputUrl, cacheBustValue) => {
+    try {
+      const u = new URL(inputUrl);
+      u.searchParams.set('v', String(cacheBustValue));
+      return u.toString();
+    } catch {
+      // Fallback for malformed URLs.
+      const suffix = inputUrl.includes('?') ? '&' : '?';
+      return `${inputUrl}${suffix}v=${encodeURIComponent(String(cacheBustValue))}`;
+    }
+  };
+
   const tryHeadThenFetch = async (pathname) => {
     const blobInfo = await head(pathname);
-    const candidates = [blobInfo.url, blobInfo.downloadUrl].filter(Boolean).map(normalizePublicBlobUrl);
+    const uploadedAtValue = (() => {
+      try {
+        const date = blobInfo.uploadedAt instanceof Date ? blobInfo.uploadedAt : new Date(blobInfo.uploadedAt);
+        const t = date.getTime();
+        return Number.isFinite(t) ? t : Date.now();
+      } catch {
+        return Date.now();
+      }
+    })();
+
+    const rawCandidates = [blobInfo.url, blobInfo.downloadUrl].filter(Boolean).map(normalizePublicBlobUrl);
+    const candidates = rawCandidates.map((u) => withCacheBust(u, uploadedAtValue));
     let lastStatus = null;
     let lastText = '';
 
     for (const fetchUrl of candidates) {
-      const response = await fetch(fetchUrl, { cache: 'no-store' });
+      const response = await fetch(fetchUrl, {
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json,text/plain;q=0.9,*/*;q=0.8',
+        },
+      });
       if (response.ok) {
-        const data = await response.json();
+        let data;
+        try {
+          data = await response.json();
+        } catch {
+          const text = await response.text();
+          throw new Error(`Blob did not return JSON (first 120 chars): ${text.slice(0, 120)}`);
+        }
         return {
           state: data.state ?? null,
           updatedAt: data.updatedAt ?? null,
