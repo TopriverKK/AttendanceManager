@@ -1,60 +1,6 @@
-import { createClient, createPool } from '@vercel/postgres';
+import { put, head } from '@vercel/blob';
 
-const STATE_ID = 'default';
-
-function isInvalidConnectionStringError(err) {
-  const message = err instanceof Error ? err.message : String(err);
-  return message.includes('invalid_connection_string');
-}
-
-function pickFirst(...values) {
-  for (const value of values) {
-    if (typeof value === 'string' && value.trim().length > 0) return value;
-  }
-  return undefined;
-}
-
-async function withDb(fn) {
-  // Prefer pooled connections (best for serverless). If the env provides a direct
-  // connection string, @vercel/postgres will throw `invalid_connection_string`.
-  try {
-    const pooled = pickFirst(process.env.POSTGRES_URL, process.env.DATABASE_URL, process.env.PRISMA_DATABASE_URL);
-    const pool = pooled ? createPool({ connectionString: pooled }) : createPool();
-    return await fn(pool);
-  } catch (err) {
-    if (!isInvalidConnectionStringError(err)) throw err;
-
-    const direct = pickFirst(
-      process.env.POSTGRES_URL_NON_POOLING,
-      process.env.POSTGRES_URL,
-      process.env.DATABASE_URL,
-      process.env.PRISMA_DATABASE_URL,
-    );
-    if (!direct) {
-      throw new Error(
-        "Missing Postgres connection string. Set one of POSTGRES_URL / POSTGRES_URL_NON_POOLING / DATABASE_URL / PRISMA_DATABASE_URL for this deployment.",
-      );
-    }
-
-    const client = createClient({ connectionString: direct });
-    await client.connect();
-    try {
-      return await fn(client);
-    } finally {
-      await client.end();
-    }
-  }
-}
-
-async function ensureSchema(db) {
-  await db.query(`
-    CREATE TABLE IF NOT EXISTS app_state (
-      id text PRIMARY KEY,
-      state jsonb NOT NULL,
-      updated_at timestamptz NOT NULL DEFAULT now()
-    );
-  `);
-}
+const STATE_ID = 'app-state.json';
 
 function json(res, statusCode, payload) {
   res.statusCode = statusCode;
@@ -71,79 +17,104 @@ function redactString(value) {
 
 function safeSerializeError(err) {
   const seen = new WeakSet();
-  const scrub = (input) => {
+  const scrub = (input, depth = 0) => {
+    if (depth > 3) return '[Max Depth]';
     if (input == null) return input;
     if (typeof input === 'string') return redactString(input);
-    if (typeof input !== 'object') return input;
+    if (typeof input === 'number' || typeof input === 'boolean') return input;
+    if (typeof input !== 'object') return String(input);
+    
+    // Prevent circular references
     if (seen.has(input)) return '[Circular]';
     seen.add(input);
 
     const out = Array.isArray(input) ? [] : {};
-    for (const [k, v] of Object.entries(input)) {
-      const key = String(k).toLowerCase();
-      if (key.includes('password') || key.includes('secret') || key.includes('token') || key.includes('connection') || key.includes('url')) {
-        out[k] = '***';
-        continue;
+    try {
+      for (const [k, v] of Object.entries(input)) {
+        const key = String(k).toLowerCase();
+        if (key.includes('password') || key.includes('secret') || key.includes('token') || key.includes('connection') || key.includes('url')) {
+          out[k] = '***';
+          continue;
+        }
+        out[k] = scrub(v, depth + 1);
       }
-      out[k] = scrub(v);
+    } catch {
+      return '[Error serializing]';
     }
     return out;
   };
 
-  if (err instanceof Error) {
-    return scrub({
-      name: err.name,
-      message: redactString(err.message),
-      // Some libraries attach extra details.
-      cause: err.cause,
-    });
+  try {
+    if (err instanceof Error) {
+      return {
+        name: err.name,
+        message: redactString(err.message),
+        stack: err.stack ? redactString(err.stack.split('\n').slice(0, 3).join('\n')) : undefined,
+      };
+    }
+    return scrub(err);
+  } catch {
+    return { error: 'Failed to serialize error details' };
   }
+}
 
-  return scrub(err);
+async function getBlobState() {
+  try {
+    // Check if blob exists
+    try {
+      const blobInfo = await head(STATE_ID);
+      // Blob exists, fetch it
+      const response = await fetch(blobInfo.url);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch blob: ${response.statusText}`);
+      }
+      const data = await response.json();
+      return {
+        state: data.state,
+        updatedAt: data.updatedAt
+      };
+    } catch (headErr) {
+      // Blob doesn't exist, return null state
+      return { state: null, updatedAt: null };
+    }
+  } catch (err) {
+    // Return empty state on any error
+    return { state: null, updatedAt: null };
+  }
+}
+
+async function setBlobState(state) {
+  const updatedAt = new Date().toISOString();
+  const payload = JSON.stringify({ state, updatedAt });
+  
+  const blob = await put(STATE_ID, payload, {
+    access: 'public',
+    contentType: 'application/json',
+  });
+  
+  return { ok: true, updatedAt, url: blob.url };
 }
 
 export default async function handler(req, res) {
   try {
-    await withDb(async (db) => {
-      await ensureSchema(db);
+    if (req.method === 'GET') {
+      const data = await getBlobState();
+      return json(res, 200, data);
+    }
 
-      if (req.method === 'GET') {
-        const result = await db.query('SELECT state, updated_at FROM app_state WHERE id = $1;', [STATE_ID]);
-        const row = result.rows?.[0];
-        if (!row) {
-          return json(res, 200, { state: null, updatedAt: null });
-        }
-
-        const state = typeof row.state === 'string' ? JSON.parse(row.state) : row.state;
-        return json(res, 200, { state, updatedAt: row.updated_at });
+    if (req.method === 'POST') {
+      const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
+      if (!body || typeof body !== 'object' || !('state' in body)) {
+        return json(res, 400, { error: 'Missing `state` in request body.' });
       }
 
-      if (req.method === 'POST') {
-        const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
-        if (!body || typeof body !== 'object' || !('state' in body)) {
-          return json(res, 400, { error: 'Missing `state` in request body.' });
-        }
+      const result = await setBlobState(body.state);
+      return json(res, 200, result);
+    }
 
-        const serialized = JSON.stringify(body.state);
-        const upsert = await db.query(
-          `
-          INSERT INTO app_state (id, state)
-          VALUES ($1, $2::jsonb)
-          ON CONFLICT (id)
-          DO UPDATE SET state = EXCLUDED.state, updated_at = now()
-          RETURNING updated_at;
-          `,
-          [STATE_ID, serialized],
-        );
-
-        return json(res, 200, { ok: true, updatedAt: upsert.rows?.[0]?.updated_at ?? null });
-      }
-
-      res.setHeader('Allow', 'GET, POST');
-      return json(res, 405, { error: 'Method not allowed' });
-    });
+    res.setHeader('Allow', 'GET, POST');
+    return json(res, 405, { error: 'Method not allowed' });
   } catch (err) {
-    // If Postgres isn't configured yet, this is the most common failure.
     const details = safeSerializeError(err);
     const message = err instanceof Error ? err.message : typeof err === 'string' ? err : 'Unexpected error';
     return json(res, 500, { error: 'Internal Server Error', message: redactString(message), details });
