@@ -107,6 +107,7 @@ async function setBlobState(state) {
     contentType: 'application/json',
     // Ensure we overwrite the same key; otherwise sync will never converge.
     addRandomSuffix: false,
+    allowOverwrite: true,
   });
   
   return { ok: true, updatedAt, url: blob.url };
