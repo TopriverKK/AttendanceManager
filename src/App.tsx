@@ -176,6 +176,8 @@ function usePersistentState() {
   const pendingSaveRef = useRef(false);
   const lastLocalChangeAtRef = useRef<number>(0);
   const lastAppliedRemoteRef = useRef<string>('');
+  const lastRemoteUpdatedAtRef = useRef<string | null>(null);
+  const [remoteReady, setRemoteReady] = useState(false);
 
   const normalizePersisted = useCallback((parsed: PersistedState) => {
     const migrated = migrateAttendanceToDatedKeys(parsed.attendance);
@@ -196,7 +198,15 @@ function usePersistentState() {
         return;
       }
       const data = (await res.json()) as { state: PersistedState | null; updatedAt?: string };
-      if (!data?.state) return;
+      // Mark ready even if remote has no state yet.
+      const remoteUpdatedAt = data?.updatedAt ?? null;
+      if (remoteUpdatedAt && lastRemoteUpdatedAtRef.current && remoteUpdatedAt <= lastRemoteUpdatedAtRef.current) {
+        return;
+      }
+      if (!data?.state) {
+        lastRemoteUpdatedAtRef.current = remoteUpdatedAt;
+        return;
+      }
 
       const normalized = normalizePersisted(data.state);
       const serialized = JSON.stringify(normalized);
@@ -215,6 +225,7 @@ function usePersistentState() {
         }
 
         // Apply remote state - prioritize server data for cross-device sync
+        lastRemoteUpdatedAtRef.current = remoteUpdatedAt;
         lastAppliedRemoteRef.current = serialized;
         lastSavedRef.current = serialized;
         localStorage.setItem(storageKey, serialized);
@@ -223,6 +234,8 @@ function usePersistentState() {
     } catch (err) {
       // Network error or CORS - fall back to localStorage silently
       console.info('Remote state unavailable (using localStorage only)');
+    } finally {
+      setRemoteReady(true);
     }
   }, [normalizePersisted]);
 
@@ -243,6 +256,12 @@ function usePersistentState() {
           } else {
             // Treat this state as the current remote snapshot to avoid echo loops.
             lastAppliedRemoteRef.current = JSON.stringify(next);
+            try {
+              const payload = (await res.json()) as { updatedAt?: string };
+              if (payload?.updatedAt) lastRemoteUpdatedAtRef.current = payload.updatedAt;
+            } catch {
+              // ignore parse errors
+            }
             console.info('State saved to remote storage');
           }
         } catch (err) {
@@ -285,11 +304,13 @@ function usePersistentState() {
     lastSavedRef.current = serialized;
     lastLocalChangeAtRef.current = Date.now();
     localStorage.setItem(storageKey, serialized);
+    // Avoid overwriting remote with placeholder/local state before the first GET completes.
+    if (!remoteReady) return;
     // If this state came from the server, don't POST it back immediately.
     if (serialized !== lastAppliedRemoteRef.current) {
       scheduleRemoteSave(state);
     }
-  }, [scheduleRemoteSave, state]);
+  }, [remoteReady, scheduleRemoteSave, state]);
 
   // Note: keep history. We only ensure today's records exist when needed.
 
