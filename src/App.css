@@ -94,6 +94,9 @@
   background: #fff;
   border: 1px solid #e5e7eb;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .summary-card.green { border-left: 5px solid #16a34a; }
@@ -105,10 +108,11 @@
   margin: 0;
   color: #4b5563;
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .summary-value {
-  margin: 4px 0 0;
+  margin: 0;
   font-size: 22px;
   font-weight: 800;
 }
@@ -175,18 +179,18 @@
 .cards-grid {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .card {
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  padding: 14px 16px;
-  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.04);
+  border-radius: 10px;
+  padding: 8px 12px;
+  box-shadow: 0 1px 3px rgba(17, 24, 39, 0.04);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
 }
 
 /* Employee card state tints (reuse existing palette values already used by pills/summary cards) */
@@ -227,29 +231,31 @@
 .card-top {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 4px;
+  gap: 8px;
+  margin-bottom: 0;
 }
 
 .avatar {
-  width: 36px;
-  height: 36px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
 }
 
 .card-name {
   margin: 0;
-  font-weight: 800;
+  font-weight: 700;
+  font-size: 14px;
 }
 
 .card-role {
-  margin: 2px 0 0;
+  margin: 0 0 0 4px;
   color: #6b7280;
+  font-size: 12px;
 }
 
 .status-pill {
   margin-left: auto;
-  padding: 4px 10px;
+  padding: 3px 8px;
   border-radius: 999px;
   font-weight: 700;
   font-size: 11px;
@@ -262,74 +268,78 @@
 .status-pill.gray { background: #e5e7eb; color: #374151; }
 
 .card-content {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-}
-
-.card-left,
-.card-right {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
 }
 
 .card-row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 10px 12px;
-  border: 1px solid #f3f4f6;
-  border-radius: 10px;
-  background: #fafafa;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.card-row-top,
+.card-row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .card-info-item {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 .label {
   margin: 0;
   color: #6b7280;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
 }
 
 .value {
   margin: 0;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 12px;
 }
 
 .value.subtle { color: #6b7280; }
 
 .next-event {
-  padding: 10px 12px;
+  padding: 4px 8px;
   border: 1px solid #e0e7ff;
-  border-radius: 10px;
+  border-radius: 6px;
   background: linear-gradient(135deg, #f0f9ff 0%, #fef3c7 100%);
-  font-size: 13px;
+  font-size: 11px;
+  flex: 1;
+  min-width: 0;
 }
 
 .next-event .label {
   font-weight: 700;
   color: #4b5563;
-  margin-bottom: 4px;
-  display: block;
+  margin-right: 4px;
+  display: inline;
 }
 
 .next-event .value {
   color: #1f2937;
-  font-size: 13px;
-  line-height: 1.4;
+  font-size: 11px;
+  display: inline;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .actions {
   display: flex;
   gap: 6px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .actions.secondary {
@@ -337,13 +347,13 @@
 }
 
 .actions button {
-  padding: 8px 14px;
-  border-radius: 8px;
+  padding: 5px 10px;
+  border-radius: 6px;
   border: 1px solid #d1d5db;
   background: linear-gradient(180deg, #f9fafb 0%, #eef2ff 100%);
   cursor: pointer;
   font-weight: 600;
-  font-size: 13px;
+  font-size: 11px;
   white-space: nowrap;
   transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
 }
@@ -480,9 +490,8 @@
 
 @media (max-width: 720px) {
   .holiday-inputs { flex-direction: column; min-width: 0; width: 100%; }
-  .actions { flex-direction: column; }
-  .card-content { grid-template-columns: 1fr; }
-  .card-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .actions { flex-wrap: wrap; }
+  .card-row-top, .card-row-bottom { flex-wrap: wrap; }
   .settings-row { grid-template-columns: 1fr; }
   .report-controls { flex-direction: column; align-items: stretch; }
   .report-row { grid-template-columns: 1fr 1fr; }
