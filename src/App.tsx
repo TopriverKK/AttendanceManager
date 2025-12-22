@@ -1163,6 +1163,8 @@ function App() {
                     <div className="avatar" style={{ background: `hsl(${emp.avatarHue} 55% 75%)` }} />
                     <p className="card-name"  style={{ fontSize: '24px' }}>{emp.name}</p>
                     <p className="card-role">{emp.role}</p>
+                    <p className="label">場所:</p>
+                    <p className="value subtle" style={{ fontSize: '24px' }}>{locationLabel[att.location]}</p>
                     <span className={`status-pill ${statusToneMap[att.status]}`}>{statusLabelMap[att.status]}</span>
                     <div className="card-info-item">
                       <p className="label">出勤:</p>
@@ -1172,38 +1174,35 @@ function App() {
                       <p className="label">勤務:</p>
                       <p className="value">{minutesToLabel(workedMinutes)}</p>
                     </div>
-                    <div className="card-info-item" style={{ fontSize: '18px' }}>
-                      <p className="label">場所:</p>
-                      <p className="value subtle">{locationLabel[att.location]}</p>
-                    </div>
-                    <button onClick={() => handleClockIn(emp.id, 'office')} disabled={att.status === 'working'}>
+                    
+                    <button onClick={() => handleClockIn(emp.id, 'office')} disabled={att.status === 'working'} style={{ fontSize: '24px' }}>
                       出勤(オフィス)
                     </button>
-                    <button onClick={() => handleClockIn(emp.id, 'remote')} disabled={att.status === 'working'}>
+                    <button onClick={() => handleClockIn(emp.id, 'remote')} disabled={att.status === 'working'} style={{ fontSize: '24px' }}>
                       出勤(テレワーク)
                     </button>
                   </div>
 
-                  <div className="card-row-bottom">
+                  <div className="card-row-bottom"  style={{ fontSize: '20px' }}>
                     <div className="next-event">
                       <span className="label">現在:</span>
                       <span className="value">
                         {currentEvent ? `${currentEvent.summary || formatDateTime(currentEvent.start)}` : emp.calendarUrl ? 'なし' : '未設定'}
                       </span>
                     </div>
-                    <div className="next-event">
+                    <div className="next-event" style={{ fontSize: '20px' }}>
                       <span className="label">次:</span>
                       <span className="value">
                         {nextEvent ? `${nextEvent.summary || formatDateTime(nextEvent.start)}` : emp.calendarUrl ? 'なし' : '未設定'}
                       </span>
                     </div>
-                    <button onClick={() => handleClockOut(emp.id)} disabled={att.status === 'done' || att.status === 'not-clocked'}>
+                    <button onClick={() => handleClockOut(emp.id)} disabled={att.status === 'done' || att.status === 'not-clocked'} style={{ fontSize: '24px' }}>
                       退勤
                     </button>
-                    <button onClick={() => handleBreakToggle(emp.id)} disabled={att.status === 'not-clocked' || att.status === 'done'}>
+                    <button onClick={() => handleBreakToggle(emp.id)} disabled={att.status === 'not-clocked' || att.status === 'done'} style={{ fontSize: '24px' }}>
                       {att.status === 'break' ? '休憩終了' : '休憩開始'}
                     </button>
-                    <button onClick={() => handleOutToggle(emp.id)} disabled={att.status === 'not-clocked' || att.status === 'done'}>
+                    <button onClick={() => handleOutToggle(emp.id)} disabled={att.status === 'not-clocked' || att.status === 'done'} style={{ fontSize: '24px' }}>
                       {att.status === 'out' ? '外出戻り' : '外出開始'}
                     </button>
                   </div>
