@@ -93,6 +93,11 @@ async function getBlobState() {
   };
 
   const tryHeadThenFetch = async (pathname) => {
+    // Check if token is available
+    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+      throw new Error('BLOB_READ_WRITE_TOKEN is not configured. Please set up Vercel Blob storage.');
+    }
+
     const blobInfo = await head(pathname);
     const uploadedAtValue = (() => {
       try {

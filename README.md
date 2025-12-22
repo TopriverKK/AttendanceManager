@@ -68,10 +68,18 @@ npm run build
 ## クラウドストレージ（Vercel Blob）の設定
 このアプリは Vercel Blob を使用して状態を保存し、複数のタブ・端末間で同期します。
 
-### Vercelでの設定
-1. Vercel Dashboard → 対象プロジェクト → Storage → Blob を作成
-2. 対象プロジェクトの Environment Variables に `BLOB_READ_WRITE_TOKEN` を設定
-3. Redeploy（再デプロイ）
+### Vercelでの設定手順
+1. **Vercel Dashboard にログイン** → 対象プロジェクトを選択
+2. **Storage タブ** → **Create Database** → **Blob** を選択
+3. **Connect** をクリックして、プロジェクトにBlobストレージを接続
+4. 環境変数が自動的に設定されます（`BLOB_READ_WRITE_TOKEN` など）
+5. **Redeploy** → **Trigger Deployment** で再デプロイを実行
+
+### トラブルシューティング
+もし `403 Forbidden` エラーが出る場合:
+1. Vercel Dashboard → プロジェクト → **Settings** → **Environment Variables** で `BLOB_READ_WRITE_TOKEN` が設定されているか確認
+2. 設定されていない場合、Storage タブで Blob を再接続
+3. 必ず **Redeploy** を実行（環境変数の変更は再デプロイが必要）
 
 ### 動作
 - 共有状態の取得: `GET /api/state`
