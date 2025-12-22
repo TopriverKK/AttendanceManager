@@ -9,6 +9,8 @@ type Employee = {
   name: string;
   role: string;
   avatarHue: number;
+  employeeNumber: string;
+  scheduledDailyMinutes: number;
   calendarUrl?: string;
 };
 
@@ -29,7 +31,27 @@ type PersistedState = {
   employees: Employee[];
   attendance: Record<string, Attendance>;
   holidayUrl: string;
+  companyHolidayUrl: string;
 };
+
+// freee集計の前提（要件）
+const fixedWorkStart = '09:00';
+const fixedWorkEnd = '18:00';
+const fixedBreakMinutes = 90;
+const defaultScheduledDailyMinutes = 540 - fixedBreakMinutes;
+
+function normalizeEmployee(emp: Employee): Employee {
+  return {
+    ...emp,
+    employeeNumber: (emp.employeeNumber ?? '').trim(),
+    // 要件により所定は固定（9:00-18:00, 休憩1h30m）
+    scheduledDailyMinutes: defaultScheduledDailyMinutes,
+  };
+}
+
+function normalizeEmployees(employees: Employee[]): Employee[] {
+  return employees.map((e) => normalizeEmployee(e));
+}
 
 const isUnsetEmployee = (emp: Employee) => (emp.name ?? '').trim() === '未設定';
 
@@ -40,7 +62,7 @@ function toPersistableState(input: PersistedState): PersistedState {
   for (const [k, v] of Object.entries(input.attendance)) {
     if (v && allowedIds.has(v.employeeId)) attendance[k] = v;
   }
-  return { employees, attendance, holidayUrl: input.holidayUrl };
+  return { employees, attendance, holidayUrl: input.holidayUrl, companyHolidayUrl: input.companyHolidayUrl };
 }
 
 function withPlaceholderEmployees(persisted: PersistedState): PersistedState {
@@ -58,11 +80,11 @@ type CalendarEvent = {
 };
 
 const initialEmployees: Employee[] = [
-  { id: 'emp-1', name: '未設定', role: '未設定', avatarHue: 160 },
-  { id: 'emp-2', name: '未設定', role: '未設定', avatarHue: 38 },
-  { id: 'emp-3', name: '未設定', role: '未設定', avatarHue: 32 },
-  { id: 'emp-4', name: '未設定', role: '未設定', avatarHue: 200 },
-  { id: 'emp-5', name: '未設定', role: '未設定', avatarHue: 0 },
+  { id: 'emp-1', name: '未設定', role: '未設定', avatarHue: 160, employeeNumber: '', scheduledDailyMinutes: defaultScheduledDailyMinutes },
+  { id: 'emp-2', name: '未設定', role: '未設定', avatarHue: 38, employeeNumber: '', scheduledDailyMinutes: defaultScheduledDailyMinutes },
+  { id: 'emp-3', name: '未設定', role: '未設定', avatarHue: 32, employeeNumber: '', scheduledDailyMinutes: defaultScheduledDailyMinutes },
+  { id: 'emp-4', name: '未設定', role: '未設定', avatarHue: 200, employeeNumber: '', scheduledDailyMinutes: defaultScheduledDailyMinutes },
+  { id: 'emp-5', name: '未設定', role: '未設定', avatarHue: 0, employeeNumber: '', scheduledDailyMinutes: defaultScheduledDailyMinutes },
 ];
 
 const defaultHolidayIcs =
@@ -182,25 +204,6 @@ function ensureAttendanceForEmployeesForDate(
   attendance: Record<string, Attendance>,
   date: string,
 ): Record<string, Attendance> {
-
-const isUnsetEmployee = (emp: Employee) => (emp.name ?? '').trim() === '未設定';
-
-function toPersistableState(input: PersistedState): PersistedState {
-  const employees = input.employees.filter((e) => !isUnsetEmployee(e));
-  const allowedIds = new Set(employees.map((e) => e.id));
-  const attendance: Record<string, Attendance> = {};
-  for (const [k, v] of Object.entries(input.attendance)) {
-    if (v && allowedIds.has(v.employeeId)) attendance[k] = v;
-  }
-  return { employees, attendance, holidayUrl: input.holidayUrl };
-}
-
-function withPlaceholderEmployees(persisted: PersistedState): PersistedState {
-  const byId = new Map(persisted.employees.map((e) => [e.id, e] as const));
-  const mergedEmployees = initialEmployees.map((placeholder) => byId.get(placeholder.id) ?? placeholder);
-  const extras = persisted.employees.filter((e) => !mergedEmployees.some((m) => m.id === e.id));
-  return { ...persisted, employees: [...mergedEmployees, ...extras] };
-}
   const next: Record<string, Attendance> = { ...attendance };
   employees.forEach((emp) => {
     const key = attendanceKey(date, emp.id);
@@ -229,10 +232,13 @@ function usePersistentState() {
   const normalizePersisted = useCallback((parsed: PersistedState) => {
     const migrated = migrateAttendanceToDatedKeys(parsed.attendance);
     const today = todayKey();
+    const employees = normalizeEmployees(parsed.employees);
+    const companyHolidayUrl = (parsed as unknown as { companyHolidayUrl?: string }).companyHolidayUrl ?? '';
     return {
-      employees: parsed.employees,
-      attendance: ensureAttendanceForEmployeesForDate(parsed.employees, migrated, today),
+      employees,
+      attendance: ensureAttendanceForEmployeesForDate(employees, migrated, today),
       holidayUrl: parsed.holidayUrl,
+      companyHolidayUrl,
     } satisfies PersistedState;
   }, []);
 
@@ -340,10 +346,12 @@ function usePersistentState() {
       }
     }
     const today = todayKey();
+    const fallbackEmployees = normalizeEmployees(initialEmployees);
     const fallback: PersistedState = {
-      employees: initialEmployees,
-      attendance: buildInitialAttendanceForDate(initialEmployees, today),
+      employees: fallbackEmployees,
+      attendance: buildInitialAttendanceForDate(fallbackEmployees, today),
       holidayUrl: defaultHolidayIcs,
+      companyHolidayUrl: '',
     };
     lastSavedRef.current = JSON.stringify(toPersistableState(fallback));
     return fallback;
@@ -579,10 +587,66 @@ function useEmployeeCalendars(employees: Employee[], refreshKey: number) {
 
 type HolidayState = { dates: Set<string>; status: 'idle' | 'loading' | 'error' };
 
+function parseHolidayDatesFromIcs(text: string): Set<string> {
+  const toLocalDateKey = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const addDateRange = (start: Date, endExclusive: Date) => {
+    const dates: string[] = [];
+    const cursor = new Date(start);
+    cursor.setHours(0, 0, 0, 0);
+    const end = new Date(endExclusive);
+    end.setHours(0, 0, 0, 0);
+    while (cursor < end) {
+      dates.push(toLocalDateKey(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return dates;
+  };
+
+  const result = new Set<string>();
+  const blocks = text.split('BEGIN:VEVENT').slice(1);
+  for (const block of blocks) {
+    const lines = block.split(/\r?\n/);
+    const findLine = (prefix: string) => lines.find((l) => l.startsWith(prefix));
+
+    const dtStartLine = findLine('DTSTART');
+    if (!dtStartLine) continue;
+    const startRaw = dtStartLine.split(':').slice(1).join(':');
+    const startDate = parseIcsDate(startRaw);
+    if (!startDate || Number.isNaN(startDate.getTime())) continue;
+
+    const dtEndLine = findLine('DTEND');
+    const endRaw = dtEndLine ? dtEndLine.split(':').slice(1).join(':') : '';
+    const endDate = endRaw ? parseIcsDate(endRaw) : undefined;
+
+    const isAllDayStart = /^\d{8}$/.test(startRaw);
+    const isAllDayEnd = /^\d{8}$/.test(endRaw);
+
+    if (isAllDayStart && endDate && isAllDayEnd) {
+      // All-day DTEND is typically exclusive in ICS.
+      for (const key of addDateRange(startDate, endDate)) result.add(key);
+      continue;
+    }
+
+    // Fallback: treat the DTSTART day as a holiday.
+    result.add(toLocalDateKey(startDate));
+  }
+  return result;
+}
+
 function useHolidayFeed(url: string) {
   const [holidayState, setHolidayState] = useState<HolidayState>({ dates: new Set(), status: 'idle' });
 
   useEffect(() => {
+    if (!url || !url.trim()) {
+      setHolidayState({ dates: new Set(), status: 'idle' });
+      return;
+    }
     const fetchHolidays = async () => {
       setHolidayState({ dates: new Set(), status: 'loading' });
       try {
@@ -611,8 +675,7 @@ function useHolidayFeed(url: string) {
           }
         }
         if (lastErr) throw lastErr;
-        const matches = [...text.matchAll(/DTSTART;VALUE=DATE:(\d{8})/g)].map((m) => m[1]);
-        const dates = new Set(matches.map((d) => `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`));
+        const dates = parseHolidayDatesFromIcs(text);
         setHolidayState({ dates, status: 'idle' });
       } catch (err) {
         console.error(err);
@@ -630,6 +693,7 @@ function App() {
   const [view, setView] = useState<'dashboard' | 'monthly' | 'settings'>('dashboard');
   const [calendarTick, setCalendarTick] = useState(0);
   const holidayState = useHolidayFeed(state.holidayUrl);
+  const companyHolidayState = useHolidayFeed(state.companyHolidayUrl);
   const { nextEvents, currentEvents, status: calendarStatus } = useEmployeeCalendars(state.employees, calendarTick);
 
   useEffect(() => {
@@ -750,54 +814,244 @@ function App() {
   }, [state.attendance, selectedMonth]);
 
   const exportMonthlyCsv = () => {
-    const headers = ['社員番号', '日付', '出勤時刻', '退勤時刻', '休憩開始', '休憩終了', '勤務場所', 'メモ'];
-    const employeeCodeMap = new Map(state.employees.map((emp, idx) => [emp.id, String(idx + 1).padStart(4, '0')] as const));
-    const prefix = `${selectedMonth}-`;
-    const records = Object.values(state.attendance)
-      .filter((att) => att.date.startsWith(prefix))
-      .sort((a, b) => {
-        const dateCmp = a.date.localeCompare(b.date);
-        if (dateCmp !== 0) return dateCmp;
-        const aIdx = state.employees.findIndex((e) => e.id === a.employeeId);
-        const bIdx = state.employees.findIndex((e) => e.id === b.employeeId);
-        return aIdx - bIdx;
-      });
+    const freeeHeaders = [
+      '従業員番号',
+      '氏名',
+      '所定労働時間（分）',
+      '法定内残業時間（分）',
+      '時間外労働時間（分）',
+      '所定休日労働時間（分）',
+      '深夜労働時間（分）',
+      '法定休日労働時間（分）',
+      '総労働時間（分）',
+      '総労働日数',
+      '所定労働出勤日数',
+      '所定休日出勤日数',
+      '法定休日出勤日数',
+      '遅刻時間（分）',
+      '早退時間（分）',
+      '欠勤日数',
+      '遅刻日数',
+      '早退日数',
+      '有休取得日数',
+      '集計開始日',
+      '集計終了日',
+      'みなし外の法定内残業時間（分）',
+      'みなし外の時間外労働時間（分）',
+      '不足時間（分）',
+    ];
 
-    const lines = records.map((att) => {
-      const employeeCode = employeeCodeMap.get(att.employeeId) ?? '0000';
-      const breakStart = att.breaks[0]?.start ? formatTime(att.breaks[0].start) : '';
-      const breakEnd = att.breaks[0]?.end ? formatTime(att.breaks[0].end) : '';
-      return [
-        employeeCode,
-        att.date,
-        att.clockIn ? formatTime(att.clockIn) : '',
-        att.clockOut ? formatTime(att.clockOut) : '',
-        breakStart,
-        breakEnd,
-        locationLabel[att.location],
-        att.notes ?? '',
-      ].join(',');
+    const csvEscape = (value: string | number | null | undefined) => {
+      const raw = value === null || value === undefined ? '' : String(value);
+      if (raw.includes('"') || raw.includes(',') || raw.includes('\n') || raw.includes('\r')) {
+        return `"${raw.replaceAll('"', '""')}"`;
+      }
+      return raw;
+    };
+
+    const monthStart = new Date(`${selectedMonth}-01T00:00:00`);
+    const monthEnd = new Date(monthStart);
+    monthEnd.setMonth(monthEnd.getMonth() + 1);
+    monthEnd.setDate(0);
+    monthEnd.setHours(0, 0, 0, 0);
+
+    const toDateKey = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
+
+    const formatYmdSlash = (dateKey: string) => {
+      const [y, m, d] = dateKey.split('-').map((v) => Number(v));
+      return `${y}/${m}/${d}`;
+    };
+
+    const isScheduledWorkday = (dateKey: string) => {
+      const date = new Date(`${dateKey}T00:00:00`);
+      const dow = date.getDay();
+      if (dow === 0 || dow === 6) return false;
+      if (holidayState.dates.has(dateKey)) return false;
+      if (companyHolidayState.dates.has(dateKey)) return false;
+      return true;
+    };
+
+    const overlapMinutes = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) => {
+      const start = Math.max(aStart.getTime(), bStart.getTime());
+      const end = Math.min(aEnd.getTime(), bEnd.getTime());
+      if (end <= start) return 0;
+      return (end - start) / 60000;
+    };
+
+    const subtractInterval = (interval: [Date, Date], cut: [Date, Date]) => {
+      const [s, e] = interval;
+      const [cs, ce] = cut;
+      if (ce <= s || cs >= e) return [interval];
+      const out: Array<[Date, Date]> = [];
+      const leftEnd = new Date(Math.min(cs.getTime(), e.getTime()));
+      if (leftEnd > s) out.push([s, leftEnd]);
+      const rightStart = new Date(Math.max(ce.getTime(), s.getTime()));
+      if (e > rightStart) out.push([rightStart, e]);
+      return out;
+    };
+
+    const computeWorkIntervals = (att: Attendance): Array<[Date, Date]> => {
+      if (!att.clockIn) return [];
+      const start = new Date(att.clockIn);
+      const end = new Date(att.clockOut ?? nowIso());
+      if (!(end > start)) return [];
+      let intervals: Array<[Date, Date]> = [[start, end]];
+      for (const b of att.breaks) {
+        if (!b?.start) continue;
+        const bStart = new Date(b.start);
+        const bEnd = new Date(b.end ?? nowIso());
+        if (!(bEnd > bStart)) continue;
+        intervals = intervals.flatMap((iv) => subtractInterval(iv, [bStart, bEnd]));
+        if (intervals.length === 0) break;
+      }
+      return intervals.filter(([s, e]) => e > s);
+    };
+
+    const computeNightMinutes = (att: Attendance) => {
+      const intervals = computeWorkIntervals(att);
+      let total = 0;
+      for (const [start, end] of intervals) {
+        const cursor = new Date(start);
+        cursor.setHours(0, 0, 0, 0);
+        while (cursor < end) {
+          const dayStart = new Date(cursor);
+          const nextDayStart = new Date(dayStart);
+          nextDayStart.setDate(nextDayStart.getDate() + 1);
+
+          const night1Start = new Date(dayStart);
+          night1Start.setHours(0, 0, 0, 0);
+          const night1End = new Date(dayStart);
+          night1End.setHours(5, 0, 0, 0);
+
+          const night2Start = new Date(dayStart);
+          night2Start.setHours(22, 0, 0, 0);
+          const night2End = new Date(nextDayStart);
+
+          total += overlapMinutes(start, end, night1Start, night1End);
+          total += overlapMinutes(start, end, night2Start, night2End);
+
+          cursor.setDate(cursor.getDate() + 1);
+          cursor.setHours(0, 0, 0, 0);
+        }
+      }
+      return Math.round(total);
+    };
+
+    let scheduledWorkdayCount = 0;
+    for (let d = new Date(monthStart); d <= monthEnd; d.setDate(d.getDate() + 1)) {
+      if (isScheduledWorkday(toDateKey(d))) scheduledWorkdayCount += 1;
+    }
+
+    const employees = state.employees.filter((e) => !isUnsetEmployee(e));
+    const lines = employees.map((emp) => {
+      const items = monthAttendanceByEmployee[emp.id] ?? [];
+
+      const workedByDay = new Map<string, { workedMinutes: number; nightMinutes: number }>();
+      for (const att of items) {
+        // freee集計は「休憩1h30m固定」。打刻が揃っていない日は集計から除外。
+        const workedMinutes = att.clockIn && att.clockOut ? Math.max(0, minutesBetween(att.clockIn, att.clockOut) - fixedBreakMinutes) : 0;
+        const nightMinutes = computeNightMinutes(att);
+        const prev = workedByDay.get(att.date);
+        if (!prev) {
+          workedByDay.set(att.date, { workedMinutes, nightMinutes });
+        } else {
+          workedByDay.set(att.date, {
+            workedMinutes: prev.workedMinutes + workedMinutes,
+            nightMinutes: prev.nightMinutes + nightMinutes,
+          });
+        }
+      }
+
+      let totalWorkMinutes = 0;
+      let totalNightMinutes = 0;
+      let totalWorkDays = 0;
+      let scheduledWorkAttendanceDays = 0;
+      let prescribedHolidayAttendanceDays = 0;
+      let legalHolidayAttendanceDays = 0;
+
+      for (const [dateKey, day] of workedByDay.entries()) {
+        if (day.workedMinutes <= 0) continue;
+        totalWorkMinutes += day.workedMinutes;
+        totalNightMinutes += day.nightMinutes;
+        totalWorkDays += 1;
+
+        const date = new Date(`${dateKey}T00:00:00`);
+        const dow = date.getDay();
+        const scheduled = isScheduledWorkday(dateKey);
+        if (scheduled) scheduledWorkAttendanceDays += 1;
+        else if (dow === 0) legalHolidayAttendanceDays += 1;
+        else prescribedHolidayAttendanceDays += 1;
+      }
+
+      const scheduledWorkMinutes = defaultScheduledDailyMinutes * scheduledWorkdayCount;
+      const overtimeMinutes = Math.max(0, totalWorkMinutes - scheduledWorkMinutes);
+      const shortageMinutes = Math.max(0, scheduledWorkMinutes - totalWorkMinutes);
+
+      const startKey = toDateKey(monthStart);
+      const endKey = toDateKey(monthEnd);
+
+      const row = [
+        emp.employeeNumber ?? '',
+        emp.name,
+        scheduledWorkMinutes,
+        '',
+        overtimeMinutes,
+        '',
+        totalNightMinutes,
+        '',
+        totalWorkMinutes,
+        totalWorkDays,
+        scheduledWorkAttendanceDays,
+        prescribedHolidayAttendanceDays,
+        legalHolidayAttendanceDays,
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        formatYmdSlash(startKey),
+        formatYmdSlash(endKey),
+        '',
+        '',
+        shortageMinutes,
+      ];
+      return row.map((v) => csvEscape(v)).join(',');
     });
 
-    const csv = [headers.join(','), ...lines].join('\n');
+    const csv = [freeeHeaders.map((h) => csvEscape(h)).join(','), ...lines].join('\r\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `attendance-${selectedMonth}.csv`;
+    a.download = `freee-attendance-${selectedMonth}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const isHoliday = holidayState.dates.has(today);
+  const isHoliday = holidayState.dates.has(today) || companyHolidayState.dates.has(today);
 
-  const updateEmployeeField = (id: string, field: keyof Employee, value: string) => {
+  const updateEmployeeField = (id: string, field: 'name' | 'role' | 'calendarUrl', value: string) => {
     setState((prev) => {
       const employees = prev.employees.map((emp) => (emp.id === id ? { ...emp, [field]: value } : emp));
       const migrated = migrateAttendanceToDatedKeys(prev.attendance);
       return { ...prev, employees, attendance: ensureAttendanceForEmployeesForDate(employees, migrated, todayKey()) };
     });
   };
+
+  const updateEmployeeNumber = (id: string, value: string) => {
+    setState((prev) => {
+      const employees = prev.employees.map((emp) => (emp.id === id ? { ...emp, employeeNumber: value } : emp));
+      const migrated = migrateAttendanceToDatedKeys(prev.attendance);
+      return { ...prev, employees, attendance: ensureAttendanceForEmployeesForDate(employees, migrated, todayKey()) };
+    });
+  };
+
 
   const addEmployee = () => {
     const newId = `emp-${Date.now()}`;
@@ -806,6 +1060,8 @@ function App() {
       name: '新規メンバー',
       role: '役割',
       avatarHue: Math.floor(Math.random() * 360),
+      employeeNumber: '',
+      scheduledDailyMinutes: defaultScheduledDailyMinutes,
       calendarUrl: '',
     };
     setState((prev) => {
@@ -851,17 +1107,29 @@ function App() {
           <section className="holiday-panel">
             <div>
               <p className="panel-title">休日カレンダー (Google 公開 ICS)</p>
-              <p className="panel-desc">日本の祝日ICSをデフォルト設定。公開ICSのURLを上書きできます。</p>
+              <p className="panel-desc">祝日(全国)と、会社の所定休日(任意)の公開ICSを設定できます。</p>
             </div>
-            <div className="holiday-inputs">
-              <input
-                className="text-input"
-                value={state.holidayUrl}
-                onChange={(e) => setState((prev) => ({ ...prev, holidayUrl: e.target.value }))}
-                placeholder="https://...ics"
-              />
-              <span className="pill small">{holidayState.status === 'loading' ? '同期中' : '更新済'}</span>
-              <span className="pill small subtle">個人カレンダー: {calendarStatus === 'loading' ? '同期中' : '更新済'}</span>
+            <div className="holiday-inputs-column">
+              <div className="holiday-inputs">
+                <input
+                  className="text-input"
+                  value={state.holidayUrl}
+                  onChange={(e) => setState((prev) => ({ ...prev, holidayUrl: e.target.value }))}
+                  placeholder="祝日ICS: https://...ics"
+                />
+                <span className="pill small">{holidayState.status === 'loading' ? '同期中' : '更新済'}</span>
+                <span className="pill small subtle">個人カレンダー: {calendarStatus === 'loading' ? '同期中' : '更新済'}</span>
+              </div>
+              <div className="holiday-inputs">
+                <input
+                  className="text-input"
+                  value={state.companyHolidayUrl}
+                  onChange={(e) => setState((prev) => ({ ...prev, companyHolidayUrl: e.target.value }))}
+                  placeholder="所定休日ICS(任意): https://...ics"
+                />
+                <span className="pill small">{companyHolidayState.status === 'loading' ? '同期中' : '更新済'}</span>
+                <span className="pill small subtle">所定休日</span>
+              </div>
             </div>
           </section>
 
@@ -958,7 +1226,7 @@ function App() {
 
           <footer className="footer">
             <p>本日合計: {minutesToLabel(totalMinutes)}</p>
-            <p className="muted">CSVはFreee勤怠インポート用の暫定列です。公式仕様に合わせて後調整してください。</p>
+            <p className="muted">月次CSVはfreeeのサンプル（集計形式）に合わせて出力します。</p>
           </footer>
         </>
       )}
@@ -968,13 +1236,22 @@ function App() {
           <div className="settings-header">
             <div>
               <p className="panel-title">従業員情報・個人カレンダー</p>
-              <p className="panel-desc">名前・役割・個人ICSリンクを管理します。保存は自動です。</p>
+              <p className="panel-desc">freee取込用に「従業員番号」を管理します。所定は 9:00-18:00 / 休憩1h30m 固定です。</p>
             </div>
             <button className="ghost-button" onClick={addEmployee}>メンバーを追加</button>
           </div>
           <div className="settings-list">
             {state.employees.map((emp) => (
               <div key={emp.id} className="settings-row">
+                <div className="input-group">
+                  <label>従業員番号</label>
+                  <input
+                    className="text-input"
+                    value={emp.employeeNumber ?? ''}
+                    onChange={(e) => updateEmployeeNumber(emp.id, e.target.value)}
+                    placeholder="例: 42"
+                  />
+                </div>
                 <div className="input-group">
                   <label>氏名</label>
                   <input
@@ -1016,7 +1293,7 @@ function App() {
           <div className="settings-header">
             <div>
               <p className="panel-title">月次CSV / 閲覧</p>
-              <p className="panel-desc">月を選択して、勤怠の一覧表示とCSV出力ができます。</p>
+              <p className="panel-desc">月を選択して、一覧表示と freee 取込（集計形式）のCSV出力ができます。</p>
             </div>
             <div className="report-controls">
               <input
@@ -1026,7 +1303,7 @@ function App() {
                 onChange={(e) => setSelectedMonth(e.target.value)}
               />
               <button className="ghost-button" onClick={exportMonthlyCsv}>
-                CSVをダウンロード
+                freee形式CSVをダウンロード
               </button>
             </div>
           </div>

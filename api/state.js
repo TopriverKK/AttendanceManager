@@ -62,19 +62,49 @@ function safeSerializeError(err) {
 }
 
 async function getBlobState() {
+  const normalizePublicBlobUrl = (inputUrl) => {
+    try {
+      const u = new URL(inputUrl);
+      // Some environments may return a non-public hostname (e.g. <id>.blob.vercel-storage.com)
+      // even though the blob is publicly readable at <id>.public.blob.vercel-storage.com.
+      if (u.hostname.endsWith('.blob.vercel-storage.com') && !u.hostname.includes('.public.')) {
+        const firstDot = u.hostname.indexOf('.');
+        const storeId = firstDot > 0 ? u.hostname.slice(0, firstDot) : '';
+        if (storeId) {
+          u.hostname = `${storeId}.public.blob.vercel-storage.com`;
+        }
+      }
+      return u.toString();
+    } catch {
+      return inputUrl;
+    }
+  };
+
   const tryHeadThenFetch = async (pathname) => {
     const blobInfo = await head(pathname);
-    // Use the public blob URL for reads. In some configurations `downloadUrl` can return 403.
-    const fetchUrl = blobInfo.url;
-    const response = await fetch(fetchUrl, { cache: 'no-store' });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch blob: ${response.status} ${response.statusText}`);
+    const candidates = [blobInfo.url, blobInfo.downloadUrl].filter(Boolean).map(normalizePublicBlobUrl);
+    let lastStatus = null;
+    let lastText = '';
+
+    for (const fetchUrl of candidates) {
+      const response = await fetch(fetchUrl, { cache: 'no-store' });
+      if (response.ok) {
+        const data = await response.json();
+        return {
+          state: data.state ?? null,
+          updatedAt: data.updatedAt ?? null,
+        };
+      }
+      lastStatus = `${response.status} ${response.statusText}`;
+      try {
+        lastText = await response.text();
+      } catch {
+        lastText = '';
+      }
+      // Try next candidate for 403/404 and similar.
     }
-    const data = await response.json();
-    return {
-      state: data.state ?? null,
-      updatedAt: data.updatedAt ?? null,
-    };
+
+    throw new Error(`Failed to fetch blob: ${lastStatus ?? 'unknown'}${lastText ? ` (${lastText.slice(0, 120)})` : ''}`);
   };
 
   try {
