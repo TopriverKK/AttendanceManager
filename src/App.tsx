@@ -56,7 +56,21 @@ function normalizeEmployees(employees: Employee[]): Employee[] {
 const isUnsetEmployee = (emp: Employee) => (emp.name ?? '').trim() === '未設定';
 
 function toPersistableState(input: PersistedState): PersistedState {
-  const employees = input.employees.filter((e) => !isUnsetEmployee(e));
+  // Validate employees to ensure no blank critical fields
+  const employees = input.employees.map(emp => {
+    const name = (emp.name ?? '').trim();
+    const role = (emp.role ?? '').trim();
+    
+    // Ensure required fields are never completely blank
+    return {
+      ...emp,
+      name: name || '未設定',
+      role: role || '未設定',
+      employeeNumber: (emp.employeeNumber ?? '').trim(),
+      calendarUrl: (emp.calendarUrl ?? '').trim(),
+    };
+  });
+  
   const allowedIds = new Set(employees.map((e) => e.id));
   const attendance: Record<string, Attendance> = {};
   for (const [k, v] of Object.entries(input.attendance)) {
@@ -65,11 +79,31 @@ function toPersistableState(input: PersistedState): PersistedState {
   return { employees, attendance, holidayUrl: input.holidayUrl, companyHolidayUrl: input.companyHolidayUrl };
 }
 
-function withPlaceholderEmployees(persisted: PersistedState): PersistedState {
-  const byId = new Map(persisted.employees.map((e) => [e.id, e] as const));
-  const mergedEmployees = initialEmployees.map((placeholder) => byId.get(placeholder.id) ?? placeholder);
-  const extras = persisted.employees.filter((e) => !mergedEmployees.some((m) => m.id === e.id));
-  return { ...persisted, employees: [...mergedEmployees, ...extras] };
+// Merge remote data with local - NEVER overwrite real data with placeholders or blanks
+function mergeEmployeeData(remote: Employee, local: Employee | undefined): Employee {
+  if (!local) return remote;
+  
+  const remoteName = (remote.name ?? '').trim();
+  const localName = (local.name ?? '').trim();
+  const remoteRole = (remote.role ?? '').trim();
+  const localRole = (local.role ?? '').trim();
+  const remoteNumber = (remote.employeeNumber ?? '').trim();
+  const localNumber = (local.employeeNumber ?? '').trim();
+  const remoteCalendar = (remote.calendarUrl ?? '').trim();
+  const localCalendar = (local.calendarUrl ?? '').trim();
+  
+  // Helper to check if a value is "unset" or blank
+  const isBlankOrUnset = (val: string) => !val || val === '未設定';
+  
+  return {
+    ...remote,
+    // Only use remote if it has real data AND local is blank/unset
+    // Otherwise keep local to prevent data loss
+    name: isBlankOrUnset(localName) ? remote.name : isBlankOrUnset(remoteName) ? local.name : remote.name,
+    role: isBlankOrUnset(localRole) ? remote.role : isBlankOrUnset(remoteRole) ? local.role : remote.role,
+    employeeNumber: isBlankOrUnset(localNumber) ? remote.employeeNumber : isBlankOrUnset(remoteNumber) ? local.employeeNumber : remote.employeeNumber,
+    calendarUrl: isBlankOrUnset(localCalendar) ? remote.calendarUrl : isBlankOrUnset(remoteCalendar) ? local.calendarUrl : remote.calendarUrl,
+  };
 }
 
 type CalendarEvent = {
@@ -90,7 +124,6 @@ const initialEmployees: Employee[] = [
 const defaultHolidayIcs =
   'https://www.google.com/calendar/ical/ja.japanese%23holiday%40group.v.calendar.google.com/public/basic.ics';
 
-const storageKey = 'attendance-dashboard-state';
 const remoteStateEndpoint = '/api/state';
 
 const attendanceKey = (date: string, employeeId: string) => `${date}:${employeeId}`;
@@ -251,7 +284,6 @@ function usePersistentState() {
         return;
       }
       const data = (await res.json()) as { state: PersistedState | null; updatedAt?: string };
-      // Mark ready even if remote has no state yet.
       const remoteUpdatedAt = data?.updatedAt ?? null;
       if (remoteUpdatedAt && lastRemoteUpdatedAtRef.current && remoteUpdatedAt <= lastRemoteUpdatedAtRef.current) {
         return;
@@ -262,7 +294,6 @@ function usePersistentState() {
       }
 
       const normalized = normalizePersisted(data.state);
-      const full = withPlaceholderEmployees(normalized);
       const serialized = JSON.stringify(toPersistableState(normalized));
 
       setState((prev) => {
@@ -278,16 +309,32 @@ function usePersistentState() {
           return prev;
         }
 
+        // Merge employees intelligently - NEVER let blank/unset data overwrite real data
+        const prevEmployeesById = new Map(prev.employees.map(e => [e.id, e]));
+        const mergedEmployees = normalized.employees.map(remoteEmp => {
+          const localEmp = prevEmployeesById.get(remoteEmp.id);
+          // Skip merge if remote employee is completely unset/blank
+          if (isUnsetEmployee(remoteEmp) && localEmp && !isUnsetEmployee(localEmp)) {
+            return localEmp; // Keep local data when remote is just placeholder
+          }
+          return mergeEmployeeData(remoteEmp, localEmp);
+        });
+        
+        // Add any local-only employees that aren't in remote (preserve all set employees)
+        const remoteIds = new Set(normalized.employees.map(e => e.id));
+        const localOnlyEmployees = prev.employees.filter(e => !remoteIds.has(e.id) && !isUnsetEmployee(e));
+        
+        const finalEmployees = [...mergedEmployees, ...localOnlyEmployees];
+        const merged = { ...normalized, employees: finalEmployees };
+
         // Apply remote state - prioritize server data for cross-device sync
         lastRemoteUpdatedAtRef.current = remoteUpdatedAt;
         lastAppliedRemoteRef.current = serialized;
         lastSavedRef.current = serialized;
-        localStorage.setItem(storageKey, serialized);
-        return full;
+        return merged;
       });
     } catch (err) {
-      // Network error or CORS - fall back to localStorage silently
-      console.info('Remote state unavailable (using localStorage only)');
+      console.warn('Remote state unavailable:', err);
     } finally {
       setRemoteReady(true);
     }
@@ -320,8 +367,7 @@ function usePersistentState() {
             console.info('State saved to remote storage');
           }
         } catch (err) {
-          // Network error - fall back to localStorage silently
-          console.info('Remote state unavailable (using localStorage only)');
+          console.warn('Failed to save state to remote:', err);
         } finally {
           pendingSaveRef.current = false;
         }
@@ -331,20 +377,7 @@ function usePersistentState() {
   );
 
   const [state, setState] = useState<PersistedState>(() => {
-    const stored = localStorage.getItem(storageKey);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as PersistedState;
-        if (parsed.attendance && parsed.holidayUrl && parsed.employees) {
-          const normalized = normalizePersisted(parsed);
-          const full = withPlaceholderEmployees(normalized);
-          lastSavedRef.current = JSON.stringify(toPersistableState(normalized));
-          return full;
-        }
-      } catch (err) {
-        console.warn('state parse error', err);
-      }
-    }
+    // Start with initial placeholder employees - remote data will load shortly
     const today = todayKey();
     const fallbackEmployees = normalizeEmployees(initialEmployees);
     const fallback: PersistedState = {
@@ -361,7 +394,6 @@ function usePersistentState() {
     const serialized = JSON.stringify(toPersistableState(state));
     lastSavedRef.current = serialized;
     lastLocalChangeAtRef.current = Date.now();
-    localStorage.setItem(storageKey, serialized);
     // Avoid overwriting remote with placeholder/local state before the first GET completes.
     if (!remoteReady) return;
     // If this state came from the server, don't POST it back immediately.
@@ -371,35 +403,6 @@ function usePersistentState() {
   }, [remoteReady, scheduleRemoteSave, state]);
 
   // Note: keep history. We only ensure today's records exist when needed.
-
-  const refreshFromStorage = useCallback(() => {
-    const stored = localStorage.getItem(storageKey);
-    if (!stored || stored === lastSavedRef.current) return;
-    try {
-      const parsed = JSON.parse(stored) as PersistedState;
-      if (parsed.attendance && parsed.holidayUrl && parsed.employees) {
-        setState((prev) => {
-          const nextPersisted = normalizePersisted(parsed);
-          const nextFull = withPlaceholderEmployees(nextPersisted);
-          const currentString = JSON.stringify(toPersistableState(prev));
-          const nextString = JSON.stringify(toPersistableState(nextPersisted));
-          if (currentString === nextString) return prev;
-          lastSavedRef.current = nextString;
-          return nextFull;
-        });
-      }
-    } catch (err) {
-      console.warn('refresh parse error', err);
-    }
-  }, [normalizePersisted]);
-
-  useEffect(() => {
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === storageKey) refreshFromStorage();
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, [refreshFromStorage]);
 
   useEffect(() => {
     // Load shared state from server on boot.
@@ -427,7 +430,7 @@ function usePersistentState() {
     };
   }, [loadRemote]);
 
-  return [state, setState, refreshFromStorage] as const;
+  return [state, setState] as const;
 }
 
 function parseIcsDate(raw: string) {
@@ -685,7 +688,7 @@ function useHolidayFeed(url: string) {
 }
 
 function App() {
-  const [state, setState, refreshFromStorage] = usePersistentState();
+  const [state, setState] = usePersistentState();
   const [view, setView] = useState<'dashboard' | 'monthly' | 'settings'>('dashboard');
   const [calendarTick, setCalendarTick] = useState(0);
   const holidayState = useHolidayFeed(state.holidayUrl);
@@ -693,13 +696,12 @@ function App() {
   const { nextEvents, currentEvents, status: calendarStatus } = useEmployeeCalendars(state.employees, calendarTick);
 
   useEffect(() => {
-    refreshFromStorage();
+    // Refresh calendar events every minute
     const id = setInterval(() => {
-      refreshFromStorage();
       setCalendarTick((tick) => tick + 1);
     }, 60_000);
     return () => clearInterval(id);
-  }, [refreshFromStorage]);
+  }, []);
 
   const today = todayKey();
   const [selectedMonth, setSelectedMonth] = useState(() => today.slice(0, 7));
@@ -1034,7 +1036,26 @@ function App() {
 
   const updateEmployeeField = (id: string, field: 'name' | 'role' | 'calendarUrl', value: string) => {
     setState((prev) => {
-      const employees = prev.employees.map((emp) => (emp.id === id ? { ...emp, [field]: value } : emp));
+      const employees = prev.employees.map((emp) => {
+        if (emp.id !== id) return emp;
+        const trimmedValue = (value ?? '').trim();
+        const currentValue = (emp[field] ?? '').trim();
+        
+        // CRITICAL: Never overwrite real data with blank or "未設定"
+        if ((field === 'name' || field === 'role')) {
+          // If trying to set blank or "未設定", keep existing value if it's set
+          if ((trimmedValue === '' || trimmedValue === '未設定') && currentValue !== '' && currentValue !== '未設定') {
+            return emp;
+          }
+        }
+        
+        // For calendar URL, allow clearing but prevent accidental blanking
+        if (field === 'calendarUrl' && trimmedValue === '' && currentValue !== '') {
+          // Only allow clearing if explicitly intended (keep the update)
+        }
+        
+        return { ...emp, [field]: value };
+      });
       const migrated = migrateAttendanceToDatedKeys(prev.attendance);
       return { ...prev, employees, attendance: ensureAttendanceForEmployeesForDate(employees, migrated, todayKey()) };
     });
@@ -1042,7 +1063,18 @@ function App() {
 
   const updateEmployeeNumber = (id: string, value: string) => {
     setState((prev) => {
-      const employees = prev.employees.map((emp) => (emp.id === id ? { ...emp, employeeNumber: value } : emp));
+      const employees = prev.employees.map((emp) => {
+        if (emp.id !== id) return emp;
+        const trimmedValue = (value ?? '').trim();
+        const currentValue = (emp.employeeNumber ?? '').trim();
+        
+        // Prevent overwriting set employee number with blank
+        if (trimmedValue === '' && currentValue !== '') {
+          return emp;
+        }
+        
+        return { ...emp, employeeNumber: value };
+      });
       const migrated = migrateAttendanceToDatedKeys(prev.attendance);
       return { ...prev, employees, attendance: ensureAttendanceForEmployeesForDate(employees, migrated, todayKey()) };
     });
