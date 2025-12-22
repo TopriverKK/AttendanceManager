@@ -191,10 +191,8 @@ function usePersistentState() {
     try {
       const res = await fetch(remoteStateEndpoint, { method: 'GET' });
       if (!res.ok) {
-        // Blob not configured or other server error - silently fall back to localStorage
-        if (res.status >= 500) {
-          console.info('Remote state unavailable (using localStorage only)');
-        }
+        const body = await res.text().catch(() => '');
+        console.warn(`Remote state GET failed: ${res.status} ${res.statusText}`, body);
         return;
       }
       const data = (await res.json()) as { state: PersistedState | null; updatedAt?: string };
@@ -240,10 +238,8 @@ function usePersistentState() {
             body: JSON.stringify({ state: next }),
           });
           if (!res.ok) {
-            // Blob not configured - silently use localStorage only
-            if (res.status >= 500) {
-              console.info('Remote state unavailable (using localStorage only)');
-            }
+            const body = await res.text().catch(() => '');
+            console.warn(`Remote state POST failed: ${res.status} ${res.statusText}`, body);
           } else {
             // Treat this state as the current remote snapshot to avoid echo loops.
             lastAppliedRemoteRef.current = JSON.stringify(next);

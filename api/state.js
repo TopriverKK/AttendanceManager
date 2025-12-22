@@ -1,6 +1,9 @@
 import { put, head } from '@vercel/blob';
 
-const STATE_ID = 'app-state.json';
+// Prefer a namespaced pathname to avoid collisions.
+// We keep backward-compat by reading the legacy key as a fallback.
+const STATE_ID = 'state/app-state.json';
+const LEGACY_STATE_ID = 'app-state.json';
 
 function json(res, statusCode, payload) {
   res.statusCode = statusCode;
@@ -59,37 +62,51 @@ function safeSerializeError(err) {
 }
 
 async function getBlobState() {
-  try {
-    // Check if blob exists
-    try {
-      const blobInfo = await head(STATE_ID);
-      // Blob exists, fetch it
-      const response = await fetch(blobInfo.url);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch blob: ${response.statusText}`);
-      }
-      const data = await response.json();
-      return {
-        state: data.state,
-        updatedAt: data.updatedAt
-      };
-    } catch (headErr) {
-      // Blob doesn't exist, return null state
-      return { state: null, updatedAt: null };
+  const tryHeadThenFetch = async (pathname) => {
+    const blobInfo = await head(pathname);
+    const response = await fetch(blobInfo.url, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch blob: ${response.status} ${response.statusText}`);
     }
+    const data = await response.json();
+    return {
+      state: data.state ?? null,
+      updatedAt: data.updatedAt ?? null,
+    };
+  };
+
+  try {
+    // First try the namespaced key.
+    return await tryHeadThenFetch(STATE_ID);
   } catch (err) {
-    // Return empty state on any error
-    return { state: null, updatedAt: null };
+    // If it's a simple "not found", fall back to legacy key.
+    const message = err instanceof Error ? err.message : String(err);
+    const notFound = /not\s*found|404/i.test(message);
+    if (!notFound) throw err;
+  }
+
+  try {
+    return await tryHeadThenFetch(LEGACY_STATE_ID);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const notFound = /not\s*found|404/i.test(message);
+    if (notFound) return { state: null, updatedAt: null };
+    throw err;
   }
 }
 
 async function setBlobState(state) {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    throw new Error('BLOB_READ_WRITE_TOKEN is not set. Connect Vercel Blob and ensure the env var exists in this deployment environment.');
+  }
   const updatedAt = new Date().toISOString();
   const payload = JSON.stringify({ state, updatedAt });
   
   const blob = await put(STATE_ID, payload, {
     access: 'public',
     contentType: 'application/json',
+    // Ensure we overwrite the same key; otherwise sync will never converge.
+    addRandomSuffix: false,
   });
   
   return { ok: true, updatedAt, url: blob.url };
