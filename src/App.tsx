@@ -190,8 +190,14 @@ function usePersistentState() {
   const loadRemote = useCallback(async () => {
     try {
       const res = await fetch(remoteStateEndpoint, { method: 'GET' });
-      if (!res.ok) return;
-      const data = (await res.json()) as { state: PersistedState | null };
+      if (!res.ok) {
+        // Blob not configured or other server error - silently fall back to localStorage
+        if (res.status >= 500) {
+          console.info('Remote state unavailable (using localStorage only)');
+        }
+        return;
+      }
+      const data = (await res.json()) as { state: PersistedState | null; updatedAt?: string };
       if (!data?.state) return;
 
       const normalized = normalizePersisted(data.state);
@@ -200,17 +206,25 @@ function usePersistentState() {
       setState((prev) => {
         const prevSerialized = JSON.stringify(prev);
         if (prevSerialized === serialized) return prev;
-        // If the user just changed something locally, avoid clobbering.
-        if (Date.now() - lastLocalChangeAtRef.current < 5000) return prev;
+        
+        // If we just saved this exact state to remote, don't reload it
+        if (serialized === lastAppliedRemoteRef.current) return prev;
+        
+        // If user is actively editing (within 2 seconds), defer the update
+        if (Date.now() - lastLocalChangeAtRef.current < 2000) {
+          console.info('Deferring remote update while user is editing');
+          return prev;
+        }
 
-        // Mark as remote-applied so we don't immediately POST it back.
+        // Apply remote state - prioritize server data for cross-device sync
         lastAppliedRemoteRef.current = serialized;
         lastSavedRef.current = serialized;
         localStorage.setItem(storageKey, serialized);
         return normalized;
       });
     } catch (err) {
-      console.warn('remote load error', err);
+      // Network error or CORS - fall back to localStorage silently
+      console.info('Remote state unavailable (using localStorage only)');
     }
   }, [normalizePersisted]);
 
@@ -226,13 +240,18 @@ function usePersistentState() {
             body: JSON.stringify({ state: next }),
           });
           if (!res.ok) {
-            console.warn('remote save failed', await res.text());
+            // Blob not configured - silently use localStorage only
+            if (res.status >= 500) {
+              console.info('Remote state unavailable (using localStorage only)');
+            }
           } else {
             // Treat this state as the current remote snapshot to avoid echo loops.
             lastAppliedRemoteRef.current = JSON.stringify(next);
+            console.info('State saved to remote storage');
           }
         } catch (err) {
-          console.warn('remote save error', err);
+          // Network error - fall back to localStorage silently
+          console.info('Remote state unavailable (using localStorage only)');
         } finally {
           pendingSaveRef.current = false;
         }
@@ -320,11 +339,11 @@ function usePersistentState() {
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
 
-    // Poll periodically so other devices' updates show up.
+    // Poll every 5 seconds for cross-device sync
     const id = window.setInterval(() => {
       if (pendingSaveRef.current) return;
       void loadRemote();
-    }, 10_000);
+    }, 5_000);
     return () => {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
