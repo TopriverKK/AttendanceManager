@@ -261,6 +261,7 @@ function usePersistentState() {
   const lastAppliedRemoteRef = useRef<string>('');
   const lastRemoteUpdatedAtRef = useRef<string | null>(null);
   const [remoteReady, setRemoteReady] = useState(false);
+  const isInitialLoadRef = useRef(true);
 
   const normalizePersisted = useCallback((parsed: PersistedState) => {
     const migrated = migrateAttendanceToDatedKeys(parsed.attendance);
@@ -302,6 +303,16 @@ function usePersistentState() {
         
         // If we just saved this exact state to remote, don't reload it
         if (serialized === lastAppliedRemoteRef.current) return prev;
+        
+        // On first load, use remote data completely (don't merge with placeholder)
+        if (isInitialLoadRef.current) {
+          isInitialLoadRef.current = false;
+          lastRemoteUpdatedAtRef.current = remoteUpdatedAt;
+          lastAppliedRemoteRef.current = serialized;
+          lastSavedRef.current = serialized;
+          console.info('Initial remote data loaded');
+          return normalized;
+        }
         
         // If user is actively editing (within 2 seconds), defer the update
         if (Date.now() - lastLocalChangeAtRef.current < 2000) {
