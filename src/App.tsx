@@ -1168,49 +1168,74 @@ function App() {
                     <span className={`status-pill ${statusToneMap[att.status]}`}>{statusLabelMap[att.status]}</span>
                   </div>
 
-                  <div className="card-row">
-                    <div className="card-info-item">
-                      <p className="label">出勤:</p>
-                      <p className="value">{formatTime(att.clockIn)}</p>
-                    </div>
-                    <div className="card-info-item">
-                      <p className="label">勤務:</p>
-                      <p className="value">{minutesToLabel(workedMinutes)}</p>
-                    </div>
-                    <div className="card-info-item">
-                      <p className="label">場所:</p>
-                      <p className="value subtle">{locationLabel[att.location]}</p>
-                    </div>
-                    <div className="card-events">
-                      {currentEvent && (
-                        <div className="next-event">
-                          <span className="label">現在:</span> {currentEvent.summary ?? formatDateTime(currentEvent.start)}
+                  <div className="card-content">
+                    <div className="card-left">
+                      <div className="card-row">
+                        <div className="card-info-item">
+                          <p className="label">出勤:</p>
+                          <p className="value">{formatTime(att.clockIn)}</p>
                         </div>
-                      )}
-                      {nextEvent && (
-                        <div className="next-event">
-                          <span className="label">次:</span> {nextEvent.summary ?? formatDateTime(nextEvent.start)}
+                        <div className="card-info-item">
+                          <p className="label">勤務:</p>
+                          <p className="value">{minutesToLabel(workedMinutes)}</p>
                         </div>
-                      )}
-                    </div>
-                  </div>
+                        <div className="card-info-item">
+                          <p className="label">場所:</p>
+                          <p className="value subtle">{locationLabel[att.location]}</p>
+                        </div>
+                      </div>
 
-                  <div className="actions">
-                    <button onClick={() => handleClockIn(emp.id, 'office')} disabled={att.status === 'working'}>
-                      出勤(オフィス)
-                    </button>
-                    <button onClick={() => handleClockIn(emp.id, 'remote')} disabled={att.status === 'working'}>
-                      出勤(テレワーク)
-                    </button>
-                    <button onClick={() => handleClockOut(emp.id)} disabled={att.status === 'done' || att.status === 'not-clocked'}>
-                      退勤
-                    </button>
-                    <button onClick={() => handleBreakToggle(emp.id)} disabled={att.status === 'not-clocked' || att.status === 'done'}>
-                      {att.status === 'break' ? '休憩終了' : '休憩開始'}
-                    </button>
-                    <button onClick={() => handleOutToggle(emp.id)} disabled={att.status === 'not-clocked' || att.status === 'done'}>
-                      {att.status === 'out' ? '外出戻り' : '外出開始'}
-                    </button>
+                      <div className="actions">
+                        <button onClick={() => handleClockIn(emp.id, 'office')} disabled={att.status === 'working'}>
+                          出勤(オフィス)
+                        </button>
+                        <button onClick={() => handleClockIn(emp.id, 'remote')} disabled={att.status === 'working'}>
+                          出勤(テレワーク)
+                        </button>
+                        <button onClick={() => handleClockOut(emp.id)} disabled={att.status === 'done' || att.status === 'not-clocked'}>
+                          退勤
+                        </button>
+                        <button onClick={() => handleBreakToggle(emp.id)} disabled={att.status === 'not-clocked' || att.status === 'done'}>
+                          {att.status === 'break' ? '休憩終了' : '休憩開始'}
+                        </button>
+                        <button onClick={() => handleOutToggle(emp.id)} disabled={att.status === 'not-clocked' || att.status === 'done'}>
+                          {att.status === 'out' ? '外出戻り' : '外出開始'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="card-right">
+                      {currentEvent ? (
+                        <div className="next-event">
+                          <span className="label">現在の予定</span>
+                          <p className="value">
+                            {formatDateTime(currentEvent.start)}
+                            {currentEvent.end && ` - ${formatDateTime(currentEvent.end)}`}
+                          </p>
+                          <p className="value">{currentEvent.summary}</p>
+                          {currentEvent.location && <p className="muted">{currentEvent.location}</p>}
+                        </div>
+                      ) : (
+                        <div className="next-event">
+                          <span className="label">現在の予定</span>
+                          <p className="value">{emp.calendarUrl ? '予定なし' : 'カレンダー未設定'}</p>
+                        </div>
+                      )}
+
+                      {nextEvent ? (
+                        <div className="next-event">
+                          <span className="label">次の予定</span>
+                          <p className="value">{formatDateTime(nextEvent.start)}</p>
+                          <p className="value">{nextEvent.summary}</p>
+                          {nextEvent.location && <p className="muted">{nextEvent.location}</p>}
+                        </div>
+                      ) : (
+                        <div className="next-event">
+                          <span className="label">次の予定</span>
+                          <p className="value">{emp.calendarUrl ? '予定なし' : 'カレンダー未設定'}</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </article>
               );
