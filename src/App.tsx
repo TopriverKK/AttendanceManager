@@ -100,6 +100,15 @@ const statusLabelMap: Record<WorkStatus, string> = {
   done: '退勤済',
 };
 
+function cardStateClass(att: Attendance) {
+  if (att.status === 'done') return 'card-state-done';
+  if (att.status === 'not-clocked') return 'card-state-not-clocked';
+  if (att.status === 'out' || att.status === 'break') return 'card-state-event';
+  if (att.status === 'working' && att.location === 'remote') return 'card-state-working-remote';
+  if (att.status === 'working' && att.location === 'office') return 'card-state-working-office';
+  return 'card-state-not-clocked';
+}
+
 const statusToneMap: Record<WorkStatus, 'green' | 'yellow' | 'red' | 'gray'> = {
   working: 'green',
   break: 'yellow',
@@ -829,7 +838,7 @@ function App() {
               const nextEvent = nextEvents[emp.id];
               const currentEvent = currentEvents[emp.id];
               return (
-                <article key={emp.id} className="card">
+                <article key={emp.id} className={`card ${cardStateClass(att)}`}>
                   <div className="card-top">
                     <div className="avatar" style={{ background: `hsl(${emp.avatarHue} 55% 75%)` }} />
                     <div>
