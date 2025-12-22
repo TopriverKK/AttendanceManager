@@ -31,6 +31,25 @@ type PersistedState = {
   holidayUrl: string;
 };
 
+const isUnsetEmployee = (emp: Employee) => (emp.name ?? '').trim() === '未設定';
+
+function toPersistableState(input: PersistedState): PersistedState {
+  const employees = input.employees.filter((e) => !isUnsetEmployee(e));
+  const allowedIds = new Set(employees.map((e) => e.id));
+  const attendance: Record<string, Attendance> = {};
+  for (const [k, v] of Object.entries(input.attendance)) {
+    if (v && allowedIds.has(v.employeeId)) attendance[k] = v;
+  }
+  return { employees, attendance, holidayUrl: input.holidayUrl };
+}
+
+function withPlaceholderEmployees(persisted: PersistedState): PersistedState {
+  const byId = new Map(persisted.employees.map((e) => [e.id, e] as const));
+  const mergedEmployees = initialEmployees.map((placeholder) => byId.get(placeholder.id) ?? placeholder);
+  const extras = persisted.employees.filter((e) => !mergedEmployees.some((m) => m.id === e.id));
+  return { ...persisted, employees: [...mergedEmployees, ...extras] };
+}
+
 type CalendarEvent = {
   start: string;
   end?: string;
@@ -39,11 +58,11 @@ type CalendarEvent = {
 };
 
 const initialEmployees: Employee[] = [
-  { id: 'emp-1', name: '山田 太郎', role: 'エンジニア', avatarHue: 160 },
-  { id: 'emp-2', name: '沢田 綾菜', role: 'デザイナー', avatarHue: 38 },
-  { id: 'emp-3', name: '藤小 岬里', role: 'エンジニア', avatarHue: 32 },
-  { id: 'emp-4', name: '渥田 郁奏', role: 'エンジニア', avatarHue: 200 },
-  { id: 'emp-5', name: '佐田 旦介', role: 'エンジニア', avatarHue: 0 },
+  { id: 'emp-1', name: '未設定', role: '未設定', avatarHue: 160 },
+  { id: 'emp-2', name: '未設定', role: '未設定', avatarHue: 38 },
+  { id: 'emp-3', name: '未設定', role: '未設定', avatarHue: 32 },
+  { id: 'emp-4', name: '未設定', role: '未設定', avatarHue: 200 },
+  { id: 'emp-5', name: '未設定', role: '未設定', avatarHue: 0 },
 ];
 
 const defaultHolidayIcs =
@@ -163,6 +182,25 @@ function ensureAttendanceForEmployeesForDate(
   attendance: Record<string, Attendance>,
   date: string,
 ): Record<string, Attendance> {
+
+const isUnsetEmployee = (emp: Employee) => (emp.name ?? '').trim() === '未設定';
+
+function toPersistableState(input: PersistedState): PersistedState {
+  const employees = input.employees.filter((e) => !isUnsetEmployee(e));
+  const allowedIds = new Set(employees.map((e) => e.id));
+  const attendance: Record<string, Attendance> = {};
+  for (const [k, v] of Object.entries(input.attendance)) {
+    if (v && allowedIds.has(v.employeeId)) attendance[k] = v;
+  }
+  return { employees, attendance, holidayUrl: input.holidayUrl };
+}
+
+function withPlaceholderEmployees(persisted: PersistedState): PersistedState {
+  const byId = new Map(persisted.employees.map((e) => [e.id, e] as const));
+  const mergedEmployees = initialEmployees.map((placeholder) => byId.get(placeholder.id) ?? placeholder);
+  const extras = persisted.employees.filter((e) => !mergedEmployees.some((m) => m.id === e.id));
+  return { ...persisted, employees: [...mergedEmployees, ...extras] };
+}
   const next: Record<string, Attendance> = { ...attendance };
   employees.forEach((emp) => {
     const key = attendanceKey(date, emp.id);
@@ -218,10 +256,11 @@ function usePersistentState() {
       }
 
       const normalized = normalizePersisted(data.state);
-      const serialized = JSON.stringify(normalized);
+      const full = withPlaceholderEmployees(normalized);
+      const serialized = JSON.stringify(toPersistableState(normalized));
 
       setState((prev) => {
-        const prevSerialized = JSON.stringify(prev);
+        const prevSerialized = JSON.stringify(toPersistableState(prev));
         if (prevSerialized === serialized) return prev;
         
         // If we just saved this exact state to remote, don't reload it
@@ -238,7 +277,7 @@ function usePersistentState() {
         lastAppliedRemoteRef.current = serialized;
         lastSavedRef.current = serialized;
         localStorage.setItem(storageKey, serialized);
-        return normalized;
+        return full;
       });
     } catch (err) {
       // Network error or CORS - fall back to localStorage silently
@@ -254,17 +293,18 @@ function usePersistentState() {
       pendingSaveRef.current = true;
       saveTimerRef.current = window.setTimeout(async () => {
         try {
+          const persistable = toPersistableState(next);
           const res = await fetch(remoteStateEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ state: next }),
+            body: JSON.stringify({ state: persistable }),
           });
           if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.warn(`Remote state POST failed: ${res.status} ${res.statusText}`, body);
           } else {
             // Treat this state as the current remote snapshot to avoid echo loops.
-            lastAppliedRemoteRef.current = JSON.stringify(next);
+            lastAppliedRemoteRef.current = JSON.stringify(persistable);
             try {
               const payload = (await res.json()) as { updatedAt?: string };
               if (payload?.updatedAt) lastRemoteUpdatedAtRef.current = payload.updatedAt;
@@ -291,8 +331,9 @@ function usePersistentState() {
         const parsed = JSON.parse(stored) as PersistedState;
         if (parsed.attendance && parsed.holidayUrl && parsed.employees) {
           const normalized = normalizePersisted(parsed);
-          lastSavedRef.current = JSON.stringify(normalized);
-          return normalized;
+          const full = withPlaceholderEmployees(normalized);
+          lastSavedRef.current = JSON.stringify(toPersistableState(normalized));
+          return full;
         }
       } catch (err) {
         console.warn('state parse error', err);
@@ -304,12 +345,12 @@ function usePersistentState() {
       attendance: buildInitialAttendanceForDate(initialEmployees, today),
       holidayUrl: defaultHolidayIcs,
     };
-    lastSavedRef.current = JSON.stringify(fallback);
+    lastSavedRef.current = JSON.stringify(toPersistableState(fallback));
     return fallback;
   });
 
   useEffect(() => {
-    const serialized = JSON.stringify(state);
+    const serialized = JSON.stringify(toPersistableState(state));
     lastSavedRef.current = serialized;
     lastLocalChangeAtRef.current = Date.now();
     localStorage.setItem(storageKey, serialized);
@@ -330,12 +371,13 @@ function usePersistentState() {
       const parsed = JSON.parse(stored) as PersistedState;
       if (parsed.attendance && parsed.holidayUrl && parsed.employees) {
         setState((prev) => {
-          const next = normalizePersisted(parsed);
-          const currentString = JSON.stringify(prev);
-          const nextString = JSON.stringify(next);
+          const nextPersisted = normalizePersisted(parsed);
+          const nextFull = withPlaceholderEmployees(nextPersisted);
+          const currentString = JSON.stringify(toPersistableState(prev));
+          const nextString = JSON.stringify(toPersistableState(nextPersisted));
           if (currentString === nextString) return prev;
           lastSavedRef.current = nextString;
-          return next;
+          return nextFull;
         });
       }
     } catch (err) {
