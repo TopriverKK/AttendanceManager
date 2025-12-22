@@ -173,17 +173,21 @@
 .pill.subtle { background: #f3f4f6; color: #6b7280; }
 
 .cards-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .card {
   background: #fff;
   border: 1px solid #e5e7eb;
-  border-radius: 16px;
-  padding: 16px;
-  box-shadow: 0 10px 30px rgba(17, 24, 39, 0.05);
+  border-radius: 12px;
+  padding: 10px 14px;
+  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.04);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
 }
 
 /* Employee card state tints (reuse existing palette values already used by pills/summary cards) */
@@ -225,12 +229,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .avatar {
-  width: 42px;
-  height: 42px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
 }
 
@@ -246,10 +250,11 @@
 
 .status-pill {
   margin-left: auto;
-  padding: 6px 12px;
+  padding: 4px 10px;
   border-radius: 999px;
-  font-weight: 800;
-  font-size: 12px;
+  font-weight: 700;
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .status-pill.green { background: #d1fae5; color: #065f46; }
@@ -258,59 +263,70 @@
 .status-pill.gray { background: #e5e7eb; color: #374151; }
 
 .card-row {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  padding: 12px;
-  border: 1px solid #f3f4f6;
-  border-radius: 12px;
-  background: #fafafa;
-  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  margin-bottom: 0;
+}
+
+.card-info-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 
 .label {
   margin: 0;
   color: #6b7280;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .value {
-  margin: 2px 0 0;
-  font-weight: 800;
+  margin: 0;
+  font-weight: 700;
+  font-size: 13px;
 }
 
 .value.subtle { color: #6b7280; }
 
 .next-event {
-  padding: 10px 12px;
-  border: 1px dashed #e5e7eb;
-  border-radius: 12px;
-  background: #fbfbff;
-  margin-bottom: 10px;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+  font-size: 12px;
 }
 
-.next-event + .next-event {
-  margin-top: 6px;
+.card-events {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .actions.secondary {
-  margin-top: 8px;
+  margin-top: 0;
 }
 
 .actions button {
-  flex: 1;
-  padding: 10px;
-  border-radius: 12px;
+  padding: 6px 12px;
+  border-radius: 8px;
   border: 1px solid #d1d5db;
   background: linear-gradient(180deg, #f9fafb 0%, #eef2ff 100%);
   cursor: pointer;
-  font-weight: 700;
+  font-weight: 600;
+  font-size: 12px;
+  white-space: nowrap;
   transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
 }
 
@@ -447,7 +463,8 @@
 @media (max-width: 720px) {
   .holiday-inputs { flex-direction: column; min-width: 0; width: 100%; }
   .actions { flex-direction: column; }
-  .card-row { grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
+  .card { grid-template-columns: 1fr; }
+  .card-row { flex-direction: column; align-items: flex-start; gap: 8px; }
   .settings-row { grid-template-columns: 1fr; }
   .report-controls { flex-direction: column; align-items: stretch; }
   .report-row { grid-template-columns: 1fr 1fr; }
@@ -458,10 +475,7 @@
   .app-shell { max-width: 100%; padding: 20px 16px 40px; }
   .app-title { font-size: 34px; }
   .summary-value { font-size: 26px; }
-  .cards-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .card { padding: 18px; }
-  .avatar { width: 48px; height: 48px; }
-  .actions button { padding: 14px 12px; }
+  .actions button { padding: 8px 12px; }
 }
 
 /* Touch devices: avoid hover "jump" */

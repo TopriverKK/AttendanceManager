@@ -1169,44 +1169,30 @@ function App() {
                   </div>
 
                   <div className="card-row">
-                    <div>
-                      <p className="label">出勤</p>
+                    <div className="card-info-item">
+                      <p className="label">出勤:</p>
                       <p className="value">{formatTime(att.clockIn)}</p>
                     </div>
-                    <div>
-                      <p className="label">本日勤務</p>
+                    <div className="card-info-item">
+                      <p className="label">勤務:</p>
                       <p className="value">{minutesToLabel(workedMinutes)}</p>
                     </div>
-                    <div>
-                      <p className="label">勤務場所</p>
+                    <div className="card-info-item">
+                      <p className="label">場所:</p>
                       <p className="value subtle">{locationLabel[att.location]}</p>
                     </div>
-                  </div>
-
-                  <div className="next-event">
-                    <p className="label">現在の予定</p>
-                    <p className="value">
-                      {emp.calendarUrl
-                        ? currentEvent
-                          ? `${formatDateTime(currentEvent.start)}${currentEvent.end ? ` - ${formatDateTime(currentEvent.end)}` : ''} ${
-                              currentEvent.summary ?? ''
-                            }`.trim()
-                          : 'なし / 取得中'
-                        : '未設定'}
-                    </p>
-                    {currentEvent?.location && <p className="muted">{currentEvent.location}</p>}
-                  </div>
-
-                  <div className="next-event">
-                    <p className="label">次の予定</p>
-                    <p className="value">
-                      {emp.calendarUrl
-                        ? nextEvent
-                          ? `${formatDateTime(nextEvent.start)} ${nextEvent.summary ?? ''}`.trim()
-                          : '予定なし / 取得中'
-                        : '未設定'}
-                    </p>
-                    {nextEvent?.location && <p className="muted">{nextEvent.location}</p>}
+                    <div className="card-events">
+                      {currentEvent && (
+                        <div className="next-event">
+                          <span className="label">現在:</span> {currentEvent.summary ?? formatDateTime(currentEvent.start)}
+                        </div>
+                      )}
+                      {nextEvent && (
+                        <div className="next-event">
+                          <span className="label">次:</span> {nextEvent.summary ?? formatDateTime(nextEvent.start)}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="actions">
@@ -1219,9 +1205,6 @@ function App() {
                     <button onClick={() => handleClockOut(emp.id)} disabled={att.status === 'done' || att.status === 'not-clocked'}>
                       退勤
                     </button>
-                  </div>
-
-                  <div className="actions secondary">
                     <button onClick={() => handleBreakToggle(emp.id)} disabled={att.status === 'not-clocked' || att.status === 'done'}>
                       {att.status === 'break' ? '休憩終了' : '休憩開始'}
                     </button>
