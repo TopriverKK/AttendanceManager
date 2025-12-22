@@ -400,7 +400,7 @@ function usePersistentState() {
     if (serialized !== lastAppliedRemoteRef.current) {
       scheduleRemoteSave(state);
     }
-  }, [remoteReady, scheduleRemoteSave, state]);
+  }, [scheduleRemoteSave, state]); // Removed remoteReady to prevent save on initial load
 
   // Note: keep history. We only ensure today's records exist when needed.
 
