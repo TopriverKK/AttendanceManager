@@ -1186,13 +1186,13 @@ function App() {
                   <div className="card-row-bottom"  style={{ fontSize: '20px' }}>
                     <div className="next-event">
                       <span className="label">現在:</span>
-                      <span className="value">
+                      <span className="value" style={{ fontSize: '20px' }}>
                         {currentEvent ? `${currentEvent.summary || formatDateTime(currentEvent.start)}` : emp.calendarUrl ? 'なし' : '未設定'}
                       </span>
                     </div>
                     <div className="next-event" style={{ fontSize: '20px' }}>
                       <span className="label">次:</span>
-                      <span className="value">
+                      <span className="value" style={{ fontSize: '20px' }}>
                         {nextEvent ? `${nextEvent.summary || formatDateTime(nextEvent.start)}` : emp.calendarUrl ? 'なし' : '未設定'}
                       </span>
                     </div>
