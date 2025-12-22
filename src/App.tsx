@@ -1161,18 +1161,18 @@ function App() {
                 <article key={emp.id} className={`card ${cardStateClass(att)}`}>
                   <div className="card-row-top">
                     <div className="avatar" style={{ background: `hsl(${emp.avatarHue} 55% 75%)` }} />
-                    <p className="card-name">{emp.name}</p>
+                    <p className="card-name"  style={{ fontSize: '24px' }}>{emp.name}</p>
                     <p className="card-role">{emp.role}</p>
                     <span className={`status-pill ${statusToneMap[att.status]}`}>{statusLabelMap[att.status]}</span>
                     <div className="card-info-item">
                       <p className="label">出勤:</p>
                       <p className="value">{formatTime(att.clockIn)}</p>
                     </div>
-                    <div className="card-info-item">
+                    <div className="card-info-item" style={{ fontSize: '18px' }}>
                       <p className="label">勤務:</p>
                       <p className="value">{minutesToLabel(workedMinutes)}</p>
                     </div>
-                    <div className="card-info-item">
+                    <div className="card-info-item" style={{ fontSize: '18px' }}>
                       <p className="label">場所:</p>
                       <p className="value subtle">{locationLabel[att.location]}</p>
                     </div>
