@@ -498,6 +498,8 @@ function pickNextAndCurrentEventFromIcs(text: string): { next: CalendarEvent | n
 
 const normalizeUrl = (url: string) => (url.startsWith('http') ? url : `https://${url}`);
 
+const buildIcsProxyUrl = (targetUrl: string) => `/api/ics?url=${encodeURIComponent(targetUrl)}`;
+
 function canonicalizeIcsUrl(raw: string) {
   const normalized = normalizeUrl(raw.trim());
   try {
@@ -522,12 +524,9 @@ function useEmployeeCalendars(employees: Employee[], refreshKey: number) {
   const fetchIcsText = useCallback(async (url: string) => {
     const target = canonicalizeIcsUrl(url);
     const candidates = [
-      // allorigins returns raw content for ICS
-      `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
-      // thingproxy as alternative
-      `https://thingproxy.freeboard.io/fetch/${target}`,
-      `https://corsproxy.io/?${encodeURIComponent(target)}`,
-      // Fallback to direct (will often fail on CORS but kept as last resort)
+      // Same-origin proxy avoids browser CORS issues.
+      buildIcsProxyUrl(target),
+      // Fallback to direct (may fail on CORS but kept as last resort)
       target,
     ];
 
@@ -652,11 +651,8 @@ function useHolidayFeed(url: string) {
       try {
         const target = canonicalizeIcsUrl(url);
         const candidates = [
-          // allorigins returns raw content for ICS
-          `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`,
-          // thingproxy as alternative
-          `https://thingproxy.freeboard.io/fetch/${target}`,
-          `https://corsproxy.io/?${encodeURIComponent(target)}`,
+          // Same-origin proxy avoids browser CORS issues.
+          buildIcsProxyUrl(target),
           target,
         ];
         let lastErr: unknown = null;
