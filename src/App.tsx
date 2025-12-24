@@ -129,7 +129,7 @@ const remoteStateEndpoint = '/api/state';
 const attendanceKey = (date: string, employeeId: string) => `${date}:${employeeId}`;
 
 const nowIso = () => new Date().toISOString();
-const todayKey = () => new Date().toISOString().slice(0, 10);
+const todayKey = (date?: Date) => (date || new Date()).toISOString().slice(0, 10);
 
 const formatTime = (iso?: string) => {
   if (!iso) return '--:--';
@@ -814,6 +814,65 @@ function App() {
     }, 60_000);
     return () => clearInterval(id);
   }, []);
+
+  // Auto clock-out at midnight (24:00 / 00:00)
+  useEffect(() => {
+    const checkAndAutoClockOut = () => {
+      const now = new Date();
+      const currentDate = todayKey();
+      
+      // Check if it's midnight (00:00 to 00:05)
+      if (now.getHours() === 0 && now.getMinutes() < 5) {
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayKey = todayKey(yesterday);
+        
+        setState((prev) => {
+          const migrated = migrateAttendanceToDatedKeys(prev.attendance);
+          const updated = { ...migrated };
+          let hasChanges = false;
+
+          // Auto clock-out any employees who were still working yesterday
+          prev.employees.forEach((emp) => {
+            const key = attendanceKey(yesterdayKey, emp.id);
+            const att = migrated[key];
+            
+            if (att && (att.status === 'working' || att.status === 'break' || att.status === 'out') && !att.clockOut) {
+              // Set clock-out to 23:59:59 of yesterday
+              const midnightTime = new Date(yesterday);
+              midnightTime.setHours(23, 59, 59, 0);
+              
+              // Close any open breaks
+              const breaks = att.breaks.map((b) => 
+                b.end ? b : { ...b, end: midnightTime.toISOString() }
+              );
+              
+              updated[key] = {
+                ...att,
+                status: 'done',
+                clockOut: midnightTime.toISOString(),
+                breaks,
+              };
+              hasChanges = true;
+              console.log(`Auto clock-out at midnight for ${emp.name}`);
+            }
+          });
+
+          if (hasChanges) {
+            return { ...prev, attendance: updated };
+          }
+          return prev;
+        });
+      }
+    };
+
+    // Check every minute
+    const id = setInterval(checkAndAutoClockOut, 60_000);
+    // Also check immediately
+    checkAndAutoClockOut();
+    
+    return () => clearInterval(id);
+  }, [setState]);
 
   const today = todayKey();
   const [selectedMonth, setSelectedMonth] = useState(() => today.slice(0, 7));
