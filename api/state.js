@@ -176,6 +176,15 @@ export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
       const data = await getBlobState();
+      
+      // Validate retrieved data before returning
+      if (data.state) {
+        if (!Array.isArray(data.state.employees) || data.state.employees.length === 0) {
+          console.warn('Retrieved state has invalid employees, returning null');
+          return json(res, 200, { state: null, updatedAt: null });
+        }
+      }
+      
       return json(res, 200, data);
     }
 
@@ -183,6 +192,38 @@ export default async function handler(req, res) {
       const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body;
       if (!body || typeof body !== 'object' || !('state' in body)) {
         return json(res, 400, { error: 'Missing `state` in request body.' });
+      }
+
+      // Validate state data to prevent empty/invalid data from overwriting good data
+      const newState = body.state;
+      if (!newState || typeof newState !== 'object') {
+        return json(res, 400, { error: 'Invalid state object.' });
+      }
+      
+      // Ensure employees array exists and is not empty
+      if (!Array.isArray(newState.employees) || newState.employees.length === 0) {
+        return json(res, 400, { error: 'State must contain at least one employee.' });
+      }
+      
+      // Ensure attendance object exists
+      if (!newState.attendance || typeof newState.attendance !== 'object') {
+        return json(res, 400, { error: 'State must contain attendance data.' });
+      }
+
+      // Optimistic locking: check if client has the latest version
+      if (body.lastKnownUpdatedAt) {
+        try {
+          const current = await getBlobState();
+          if (current.updatedAt && current.updatedAt !== body.lastKnownUpdatedAt) {
+            // Another client updated the state, reject this write
+            return json(res, 409, { 
+              error: 'Conflict: state was modified by another client.',
+              currentState: current
+            });
+          }
+        } catch (err) {
+          // If getBlobState fails, allow the write (first time or blob error)
+        }
       }
 
       const result = await setBlobState(body.state);

@@ -358,11 +358,33 @@ function usePersistentState() {
       saveTimerRef.current = window.setTimeout(async () => {
         try {
           const persistable = toPersistableState(next);
+          
+          // Validate before saving to prevent empty data
+          if (!persistable.employees || persistable.employees.length === 0) {
+            console.warn('Skipping save: no employees to save');
+            return;
+          }
+          
           const res = await fetch(remoteStateEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ state: persistable }),
+            body: JSON.stringify({ 
+              state: persistable,
+              lastKnownUpdatedAt: lastRemoteUpdatedAtRef.current // For optimistic locking
+            }),
           });
+          
+          if (res.status === 409) {
+            // Conflict detected - another client updated the state
+            console.warn('Save conflict detected, reloading from server...');
+            const conflictData = await res.json().catch(() => null);
+            if (conflictData?.currentState) {
+              // Reload the current state from server
+              await loadRemote();
+            }
+            return;
+          }
+          
           if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.warn(`Remote state POST failed: ${res.status} ${res.statusText}`, body);
@@ -384,7 +406,7 @@ function usePersistentState() {
         }
       }, 500);
     },
-    [],
+    [loadRemote],
   );
 
   const [state, setState] = useState<PersistedState>(() => {
