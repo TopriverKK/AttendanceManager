@@ -89,28 +89,68 @@ export default async function handler(req, res) {
     return text(res, 400, 'Target host is not allowed');
   }
 
-  // Fetch ICS server-side so the browser doesnÅft hit CORS.
-  let upstream;
-  try {
-    upstream = await fetch(u.toString(), {
-      headers: {
-        Accept: 'text/calendar,text/plain;q=0.9,*/*;q=0.8',
-        'User-Agent': 'attendance-dashboard/ics-proxy',
-      },
-      cache: 'no-store',
-    });
-  } catch (e) {
-    return text(res, 502, 'Upstream fetch failed');
+  // Fetch ICS server-side so the browser doesn't hit CORS.
+  // Implement retry logic with exponential backoff
+  const maxRetries = 3;
+  const initialDelay = 500;
+  let lastError;
+
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      // Create AbortController for timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+      const upstream = await fetch(u.toString(), {
+        headers: {
+          Accept: 'text/calendar,text/plain;q=0.9,*/*;q=0.8',
+          'User-Agent': 'attendance-dashboard/ics-proxy',
+        },
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!upstream.ok) {
+        lastError = `Upstream returned ${upstream.status}`;
+        // Only retry on server errors (5xx) or specific client errors
+        if (upstream.status >= 500 || upstream.status === 429) {
+          if (attempt < maxRetries - 1) {
+            const delay = initialDelay * Math.pow(2, attempt);
+            await new Promise(resolve => setTimeout(resolve, delay));
+            continue;
+          }
+        }
+        return text(res, 502, lastError);
+      }
+
+      const icsText = await upstream.text();
+      if (!icsText || !icsText.trim()) {
+        lastError = 'Upstream returned empty body';
+        if (attempt < maxRetries - 1) {
+          const delay = initialDelay * Math.pow(2, attempt);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        return text(res, 502, lastError);
+      }
+
+      // Success - set cache headers
+      res.setHeader('Cache-Control', 'public, max-age=300'); // 5 minutes cache
+      return text(res, 200, icsText, 'text/calendar; charset=utf-8');
+
+    } catch (e) {
+      lastError = e.name === 'AbortError' ? 'Request timeout' : 'Upstream fetch failed';
+      
+      // Retry on network errors and timeouts
+      if (attempt < maxRetries - 1) {
+        const delay = initialDelay * Math.pow(2, attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+    }
   }
 
-  if (!upstream.ok) {
-    return text(res, 502, `Upstream returned ${upstream.status}`);
-  }
-
-  const icsText = await upstream.text();
-  if (!icsText || !icsText.trim()) {
-    return text(res, 502, 'Upstream returned empty body');
-  }
-
-  return text(res, 200, icsText, 'text/calendar; charset=utf-8');
+  return text(res, 502, `Failed after ${maxRetries} attempts: ${lastError}`);
 }

@@ -557,8 +557,20 @@ function useEmployeeCalendars(employees: Employee[], refreshKey: number) {
   const [currentEvents, setCurrentEvents] = useState<Record<string, CalendarEvent | null>>({});
   const [status, setStatus] = useState<'idle' | 'loading'>('idle');
 
+  // In-memory cache to reduce API calls
+  const cacheRef = useRef<Map<string, { text: string; timestamp: number }>>(new Map());
+  const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
   const fetchIcsText = useCallback(async (url: string) => {
     const target = canonicalizeIcsUrl(url);
+    
+    // Check cache first
+    const cached = cacheRef.current.get(target);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      console.log('Using cached ICS for', target);
+      return cached.text;
+    }
+
     const candidates = [
       // Same-origin proxy avoids browser CORS issues.
       buildIcsProxyUrl(target),
@@ -567,16 +579,32 @@ function useEmployeeCalendars(employees: Employee[], refreshKey: number) {
     ];
 
     let lastErr: unknown = null;
-    for (const endpoint of candidates) {
+    for (let i = 0; i < candidates.length; i++) {
+      const endpoint = candidates[i];
       try {
-        const res = await fetch(endpoint);
+        // Add timeout to prevent hanging
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+
+        const res = await fetch(endpoint, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
         if (!res.ok) throw new Error(`ICS fetch failed: ${res.status}`);
         const text = await res.text();
         if (!text.trim()) throw new Error('ICS empty response');
+        
+        // Cache successful result
+        cacheRef.current.set(target, { text, timestamp: Date.now() });
         return text;
       } catch (err) {
         lastErr = err;
-        console.warn('ICS fetch failed candidate', endpoint, err);
+        const errorName = err instanceof Error ? err.name : 'Unknown';
+        console.warn(`ICS fetch failed candidate ${i + 1}/${candidates.length}:`, endpoint, errorName);
+        
+        // Don't retry on timeout for direct URL (last candidate)
+        if (errorName === 'AbortError' && i === candidates.length - 1) {
+          break;
+        }
       }
     }
     throw lastErr ?? new Error('ICS fetch failed');
@@ -588,23 +616,38 @@ function useEmployeeCalendars(employees: Employee[], refreshKey: number) {
       setStatus('loading');
       const nextMap: Record<string, CalendarEvent | null> = {};
       const currentMap: Record<string, CalendarEvent | null> = {};
-      for (const emp of employees) {
-        if (!emp.calendarUrl) {
+      
+      // Process all employees in parallel for better performance
+      const results = await Promise.allSettled(
+        employees.map(async (emp) => {
+          if (!emp.calendarUrl) {
+            return { id: emp.id, next: null, current: null };
+          }
+          try {
+            const text = await fetchIcsText(emp.calendarUrl);
+            const { next, current } = pickNextAndCurrentEventFromIcs(text);
+            return { id: emp.id, next, current };
+          } catch (err) {
+            console.warn(`Calendar fetch error for ${emp.name}:`, err);
+            return { id: emp.id, next: null, current: null };
+          }
+        })
+      );
+
+      // Process results
+      results.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          const { id, next, current } = result.value;
+          nextMap[id] = next;
+          currentMap[id] = current;
+        } else {
+          // Fallback for unexpected errors
+          const emp = employees[index];
           nextMap[emp.id] = null;
           currentMap[emp.id] = null;
-          continue;
         }
-        try {
-          const text = await fetchIcsText(emp.calendarUrl);
-          const { next, current } = pickNextAndCurrentEventFromIcs(text);
-          nextMap[emp.id] = next;
-          currentMap[emp.id] = current;
-        } catch (err) {
-          console.warn('calendar fetch error', err);
-          nextMap[emp.id] = null;
-          currentMap[emp.id] = null;
-        }
-      }
+      });
+
       if (!cancelled) {
         setNextEvents(nextMap);
         setCurrentEvents(currentMap);
@@ -615,7 +658,7 @@ function useEmployeeCalendars(employees: Employee[], refreshKey: number) {
     return () => {
       cancelled = true;
     };
-  }, [employees, refreshKey]);
+  }, [employees, refreshKey, fetchIcsText]);
 
   return { nextEvents, currentEvents, status };
 }
@@ -676,16 +719,29 @@ function parseHolidayDatesFromIcs(text: string): Set<string> {
 
 function useHolidayFeed(url: string) {
   const [holidayState, setHolidayState] = useState<HolidayState>({ dates: new Set(), status: 'idle' });
+  const cacheRef = useRef<Map<string, { dates: Set<string>; timestamp: number }>>(new Map());
+  const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours for holidays
 
   useEffect(() => {
     if (!url || !url.trim()) {
       setHolidayState({ dates: new Set(), status: 'idle' });
       return;
     }
+
     const fetchHolidays = async () => {
+      const target = canonicalizeIcsUrl(url);
+      
+      // Check cache first (holidays don't change frequently)
+      const cached = cacheRef.current.get(target);
+      if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+        console.log('Using cached holiday data');
+        setHolidayState({ dates: cached.dates, status: 'idle' });
+        return;
+      }
+
       setHolidayState({ dates: new Set(), status: 'loading' });
+      
       try {
-        const target = canonicalizeIcsUrl(url);
         const candidates = [
           // Same-origin proxy avoids browser CORS issues.
           buildIcsProxyUrl(target),
@@ -693,9 +749,17 @@ function useHolidayFeed(url: string) {
         ];
         let lastErr: unknown = null;
         let text = '';
-        for (const endpoint of candidates) {
+        
+        for (let i = 0; i < candidates.length; i++) {
+          const endpoint = candidates[i];
           try {
-            const res = await fetch(endpoint);
+            // Add timeout to prevent hanging
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout for holidays
+
+            const res = await fetch(endpoint, { signal: controller.signal });
+            clearTimeout(timeoutId);
+
             if (!res.ok) throw new Error(`ICS fetch failed: ${res.status}`);
             text = await res.text();
             if (!text.trim()) throw new Error('ICS empty response');
@@ -703,17 +767,32 @@ function useHolidayFeed(url: string) {
             break;
           } catch (err) {
             lastErr = err;
-            console.warn('holiday ICS fetch failed candidate', endpoint, err);
+            const errorName = err instanceof Error ? err.name : 'Unknown';
+            console.warn(`Holiday ICS fetch failed candidate ${i + 1}/${candidates.length}:`, endpoint, errorName);
           }
         }
+        
         if (lastErr) throw lastErr;
+        
         const dates = parseHolidayDatesFromIcs(text);
+        
+        // Cache the result
+        cacheRef.current.set(target, { dates, timestamp: Date.now() });
+        
         setHolidayState({ dates, status: 'idle' });
       } catch (err) {
-        console.error(err);
-        setHolidayState({ dates: new Set(), status: 'error' });
+        console.error('Holiday fetch error:', err);
+        // Use cached data if available, even if expired
+        const cached = cacheRef.current.get(target);
+        if (cached) {
+          console.log('Using stale cached holiday data due to fetch error');
+          setHolidayState({ dates: cached.dates, status: 'idle' });
+        } else {
+          setHolidayState({ dates: new Set(), status: 'error' });
+        }
       }
     };
+
     fetchHolidays();
   }, [url]);
 
