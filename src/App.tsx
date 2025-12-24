@@ -262,6 +262,9 @@ function usePersistentState() {
   const lastRemoteUpdatedAtRef = useRef<string | null>(null);
   const [remoteReady, setRemoteReady] = useState(false);
   const isInitialLoadRef = useRef(true);
+  const remoteStorageAvailableRef = useRef(true); // Track if remote storage is available
+
+  const LOCAL_STORAGE_KEY = 'attendance-app-state';
 
   const normalizePersisted = useCallback((parsed: PersistedState) => {
     const migrated = migrateAttendanceToDatedKeys(parsed.attendance);
@@ -282,9 +285,16 @@ function usePersistentState() {
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         console.warn(`Remote state GET failed: ${res.status} ${res.statusText}`, body);
+        
+        // Check if it's a Blob suspension error
+        if (res.status === 500 && body.includes('suspended')) {
+          console.error('Remote storage suspended. Falling back to localStorage only.');
+          remoteStorageAvailableRef.current = false;
+        }
         return;
       }
       const data = (await res.json()) as { state: PersistedState | null; updatedAt?: string };
+      remoteStorageAvailableRef.current = true; // Mark as available if successful
       const remoteUpdatedAt = data?.updatedAt ?? null;
       if (remoteUpdatedAt && lastRemoteUpdatedAtRef.current && remoteUpdatedAt <= lastRemoteUpdatedAtRef.current) {
         return;
@@ -339,6 +349,7 @@ function usePersistentState() {
         const merged = { ...normalized, employees: finalEmployees };
 
         // Apply remote state - prioritize server data for cross-device sync
+      remoteStorageAvailableRef.current = false;
         lastRemoteUpdatedAtRef.current = remoteUpdatedAt;
         lastAppliedRemoteRef.current = serialized;
         lastSavedRef.current = serialized;
@@ -362,6 +373,18 @@ function usePersistentState() {
           // Validate before saving to prevent empty data
           if (!persistable.employees || persistable.employees.length === 0) {
             console.warn('Skipping save: no employees to save');
+            return;
+          }
+          // Always save to localStorage as backup
+          try {
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(persistable));
+          } catch (localErr) {
+            console.warn('localStorage save failed:', localErr);
+          }
+          
+          // Skip remote save if storage is unavailable
+          if (!remoteStorageAvailableRef.current) {
+            console.info('Remote storage unavailable, saved to localStorage only');
             return;
           }
           
@@ -388,6 +411,12 @@ function usePersistentState() {
           if (!res.ok) {
             const body = await res.text().catch(() => '');
             console.warn(`Remote state POST failed: ${res.status} ${res.statusText}`, body);
+            
+            // Check for Blob suspension
+            if (res.status === 500 && body.includes('suspended')) {
+              console.error('Remote storage suspended. Falling back to localStorage only.');
+              remoteStorageAvailableRef.current = false;
+            }
           } else {
             // Treat this state as the current remote snapshot to avoid echo loops.
             lastAppliedRemoteRef.current = JSON.stringify(persistable);
@@ -401,6 +430,7 @@ function usePersistentState() {
           }
         } catch (err) {
           console.warn('Failed to save state to remote:', err);
+          remoteStorageAvailableRef.current = false;
         } finally {
           pendingSaveRef.current = false;
         }
@@ -410,8 +440,28 @@ function usePersistentState() {
   );
 
   const [state, setState] = useState<PersistedState>(() => {
-    // Start with initial placeholder employees - remote data will load shortly
+    // Try to load from localStorage first
     const today = todayKey();
+    
+    try {
+      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as PersistedState;
+        const normalized = {
+          employees: normalizeEmployees(parsed.employees || []),
+          attendance: parsed.attendance || {},
+          holidayUrl: parsed.holidayUrl || defaultHolidayIcs,
+          companyHolidayUrl: (parsed as any).companyHolidayUrl || '',
+        };
+        console.info('Loaded initial state from localStorage');
+        lastSavedRef.current = stored;
+        return normalized;
+      }
+    } catch (err) {
+      console.warn('Failed to load from localStorage:', err);
+    }
+    
+    // Fallback to initial placeholder employees
     const fallbackEmployees = normalizeEmployees(initialEmployees);
     const fallback: PersistedState = {
       employees: fallbackEmployees,
@@ -433,6 +483,19 @@ function usePersistentState() {
         return;
       }
       
+      // Always save to localStorage as backup
+      try {
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(persistable));
+      } catch (localErr) {
+        console.warn('localStorage save failed:', localErr);
+      }
+      
+      // Skip remote save if storage is unavailable
+      if (!remoteStorageAvailableRef.current) {
+        console.info('Remote storage unavailable, saved to localStorage only');
+        return;
+      }
+      
       const res = await fetch(remoteStateEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -451,6 +514,12 @@ function usePersistentState() {
       if (!res.ok) {
         const body = await res.text().catch(() => '');
         console.warn(`Remote state POST failed: ${res.status} ${res.statusText}`, body);
+        
+        // Check for Blob suspension
+        if (res.status === 500 && body.includes('suspended')) {
+          console.error('Remote storage suspended. Falling back to localStorage only.');
+          remoteStorageAvailableRef.current = false;
+        }
       } else {
         lastAppliedRemoteRef.current = JSON.stringify(persistable);
         try {
@@ -463,6 +532,7 @@ function usePersistentState() {
       }
     } catch (err) {
       console.warn('Failed to save state to remote:', err);
+      remoteStorageAvailableRef.current = false;
     }
   }, [loadRemote]);
 
