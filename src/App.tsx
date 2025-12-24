@@ -562,6 +562,11 @@ function useEmployeeCalendars(employees: Employee[], refreshKey: number) {
   const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   const fetchIcsText = useCallback(async (url: string) => {
+    // Validate URL before processing
+    if (!url || !url.trim()) {
+      throw new Error('Empty calendar URL');
+    }
+
     const target = canonicalizeIcsUrl(url);
     
     // Check cache first
@@ -620,7 +625,8 @@ function useEmployeeCalendars(employees: Employee[], refreshKey: number) {
       // Process all employees in parallel for better performance
       const results = await Promise.allSettled(
         employees.map(async (emp) => {
-          if (!emp.calendarUrl) {
+          // Skip if calendar URL is not set or empty
+          if (!emp.calendarUrl || !emp.calendarUrl.trim()) {
             return { id: emp.id, next: null, current: null };
           }
           try {
@@ -628,7 +634,11 @@ function useEmployeeCalendars(employees: Employee[], refreshKey: number) {
             const { next, current } = pickNextAndCurrentEventFromIcs(text);
             return { id: emp.id, next, current };
           } catch (err) {
-            console.warn(`Calendar fetch error for ${emp.name}:`, err);
+            // Only log error if it's not an empty URL error
+            const errMsg = err instanceof Error ? err.message : String(err);
+            if (!errMsg.includes('Empty calendar URL')) {
+              console.warn(`Calendar fetch error for ${emp.name}:`, err);
+            }
             return { id: emp.id, next: null, current: null };
           }
         })
