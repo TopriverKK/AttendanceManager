@@ -1,4 +1,4 @@
-import { put, head, download } from '@vercel/blob';
+import { put, head } from '@vercel/blob';
 
 // Prefer a namespaced pathname to avoid collisions.
 // We keep backward-compat by reading the legacy key as a fallback.
@@ -99,22 +99,23 @@ async function getBlobState() {
     }
 
     try {
-      // Use Vercel Blob SDK's download method which handles authentication internally
-      const { body } = await download(pathname, {
+      // Use head to get blob metadata
+      const blobInfo = await head(pathname, {
         token: process.env.BLOB_READ_WRITE_TOKEN,
       });
       
-      // Convert ReadableStream to text
-      const chunks = [];
-      const reader = body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-      }
-      const buffer = Buffer.concat(chunks);
-      const text = buffer.toString('utf-8');
+      // Fetch directly using downloadUrl with authorization
+      const response = await fetch(blobInfo.downloadUrl, {
+        headers: {
+          'Authorization': `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`,
+        },
+      });
       
+      if (!response.ok) {
+        throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
+      }
+      
+      const text = await response.text();
       let data;
       try {
         data = JSON.parse(text);
