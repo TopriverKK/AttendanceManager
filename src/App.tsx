@@ -423,19 +423,70 @@ function usePersistentState() {
     return fallback;
   });
 
+  // Manual save function for immediate saves (attendance operations)
+  const saveImmediately = useCallback(async (stateToSave: PersistedState) => {
+    try {
+      const persistable = toPersistableState(stateToSave);
+      
+      if (!persistable.employees || persistable.employees.length === 0) {
+        console.warn('Skipping save: no employees to save');
+        return;
+      }
+      
+      const res = await fetch(remoteStateEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          state: persistable,
+          lastKnownUpdatedAt: lastRemoteUpdatedAtRef.current
+        }),
+      });
+      
+      if (res.status === 409) {
+        console.warn('Save conflict detected, reloading from server...');
+        await loadRemote();
+        return;
+      }
+      
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        console.warn(`Remote state POST failed: ${res.status} ${res.statusText}`, body);
+      } else {
+        lastAppliedRemoteRef.current = JSON.stringify(persistable);
+        try {
+          const payload = (await res.json()) as { updatedAt?: string };
+          if (payload?.updatedAt) lastRemoteUpdatedAtRef.current = payload.updatedAt;
+        } catch {
+          // ignore parse errors
+        }
+        console.info('State saved immediately to remote storage');
+      }
+    } catch (err) {
+      console.warn('Failed to save state to remote:', err);
+    }
+  }, [loadRemote]);
+
+  // Track which parts of state should trigger auto-save
+  const lastHolidayUrlRef = useRef(state.holidayUrl);
+  const lastCompanyHolidayUrlRef = useRef(state.companyHolidayUrl);
+
   useEffect(() => {
-    const serialized = JSON.stringify(toPersistableState(state));
-    lastSavedRef.current = serialized;
     lastLocalChangeAtRef.current = Date.now();
-    // Avoid overwriting remote with placeholder/local state before the first GET completes.
+    
+    // Only auto-save for holiday URL changes (settings)
+    const holidayUrlChanged = state.holidayUrl !== lastHolidayUrlRef.current;
+    const companyHolidayUrlChanged = state.companyHolidayUrl !== lastCompanyHolidayUrlRef.current;
+    
+    if (holidayUrlChanged) lastHolidayUrlRef.current = state.holidayUrl;
+    if (companyHolidayUrlChanged) lastCompanyHolidayUrlRef.current = state.companyHolidayUrl;
+    
     if (!remoteReady) return;
-    // If this state came from the server, don't POST it back immediately.
-    if (serialized !== lastAppliedRemoteRef.current) {
+    
+    // Auto-save only for holiday URL changes
+    if (holidayUrlChanged || companyHolidayUrlChanged) {
       scheduleRemoteSave(state);
     }
-  }, [scheduleRemoteSave, state]); // Removed remoteReady to prevent save on initial load
-
-  // Note: keep history. We only ensure today's records exist when needed.
+  }, [scheduleRemoteSave, state, remoteReady]);
 
   useEffect(() => {
     // Load shared state from server on boot.
@@ -451,11 +502,11 @@ function usePersistentState() {
     window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
 
-    // Poll every 5 seconds for cross-device sync
+    // Poll every 10 seconds for cross-device sync (increased from 5s)
     const id = window.setInterval(() => {
       if (pendingSaveRef.current) return;
       void loadRemote();
-    }, 5_000);
+    }, 10_000);
     return () => {
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
@@ -463,7 +514,7 @@ function usePersistentState() {
     };
   }, [loadRemote]);
 
-  return [state, setState] as const;
+  return [state, setState, saveImmediately] as const;
 }
 
 function parseIcsDate(raw: string) {
@@ -810,9 +861,10 @@ function useHolidayFeed(url: string) {
 }
 
 function App() {
-  const [state, setState] = usePersistentState();
+  const [state, setState, saveImmediately] = usePersistentState();
   const [view, setView] = useState<'dashboard' | 'monthly' | 'settings'>('dashboard');
   const [calendarTick, setCalendarTick] = useState(0);
+  const [pendingEmployeeChanges, setPendingEmployeeChanges] = useState(false);
   const holidayState = useHolidayFeed(state.holidayUrl);
   const companyHolidayState = useHolidayFeed(state.companyHolidayUrl);
   const { nextEvents, currentEvents, status: calendarStatus } = useEmployeeCalendars(state.employees, calendarTick);
@@ -924,13 +976,16 @@ function App() {
       const migrated = migrateAttendanceToDatedKeys(prev.attendance);
       const nextAttendance = ensureAttendanceForEmployeesForDate(prev.employees, migrated, today);
       const key = attendanceKey(today, employeeId);
-      return {
+      const newState = {
         ...prev,
         attendance: {
           ...nextAttendance,
           [key]: updater(nextAttendance[key]),
         },
       };
+      // Save immediately after attendance update
+      void saveImmediately(newState);
+      return newState;
     });
   };
 
@@ -1216,6 +1271,7 @@ function App() {
   const isHoliday = holidayState.dates.has(today) || companyHolidayState.dates.has(today);
 
   const updateEmployeeField = (id: string, field: 'name' | 'role' | 'calendarUrl', value: string) => {
+    setPendingEmployeeChanges(true);
     setState((prev) => {
       const employees = prev.employees.map((emp) => {
         if (emp.id !== id) return emp;
@@ -1243,6 +1299,7 @@ function App() {
   };
 
   const updateEmployeeNumber = (id: string, value: string) => {
+    setPendingEmployeeChanges(true);
     setState((prev) => {
       const employees = prev.employees.map((emp) => {
         if (emp.id !== id) return emp;
@@ -1263,6 +1320,7 @@ function App() {
 
 
   const addEmployee = () => {
+    setPendingEmployeeChanges(true);
     const newId = `emp-${Date.now()}`;
     const newEmployee: Employee = {
       id: newId,
@@ -1279,6 +1337,11 @@ function App() {
       const attendance = ensureAttendanceForEmployeesForDate(employees, migrated, todayKey());
       return { ...prev, employees, attendance };
     });
+  };
+
+  const saveEmployeeSettings = async () => {
+    await saveImmediately(state);
+    setPendingEmployeeChanges(false);
   };
 
   return (
@@ -1446,7 +1509,21 @@ function App() {
               <p className="panel-title">従業員情報・個人カレンダー</p>
               <p className="panel-desc">freee取込用に「従業員番号」を管理します。所定は 9:00-18:00 / 休憩1h30m 固定です。</p>
             </div>
-            <button className="ghost-button" onClick={addEmployee}>メンバーを追加</button>
+            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+              <button 
+                className="ghost-button" 
+                onClick={saveEmployeeSettings}
+                disabled={!pendingEmployeeChanges}
+                style={{ 
+                  backgroundColor: pendingEmployeeChanges ? '#4CAF50' : undefined,
+                  color: pendingEmployeeChanges ? 'white' : undefined,
+                  fontWeight: pendingEmployeeChanges ? 'bold' : undefined
+                }}
+              >
+                {pendingEmployeeChanges ? '変更を保存' : '保存済み'}
+              </button>
+              <button className="ghost-button" onClick={addEmployee}>メンバーを追加</button>
+            </div>
           </div>
           <div className="settings-list">
             {state.employees.map((emp) => (
