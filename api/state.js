@@ -1,4 +1,4 @@
-import { put, head } from '@vercel/blob';
+import { put, head, list } from '@vercel/blob';
 
 // Prefer a namespaced pathname to avoid collisions.
 // We keep backward-compat by reading the legacy key as a fallback.
@@ -98,40 +98,91 @@ async function getBlobState() {
       throw new Error('BLOB_READ_WRITE_TOKEN is not configured. Please set up Vercel Blob storage.');
     }
 
-    try {
-      // Use head to get blob metadata
-      const blobInfo = await head(pathname, {
-        token: process.env.BLOB_READ_WRITE_TOKEN,
-      });
-      
-      // Fetch directly using downloadUrl with authorization
-      const response = await fetch(blobInfo.downloadUrl, {
-        headers: {
-          'Authorization': `Bearer ${process.env.BLOB_READ_WRITE_TOKEN}`,
-        },
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
-      }
-      
-      const text = await response.text();
-      let data;
+    let lastError = null;
+    const maxRetries = 3;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error(`Blob did not return JSON (first 120 chars): ${text.slice(0, 120)}`);
+        // Try multiple methods to fetch blob data
+        
+        // Method 1: Use list() to get the latest blob info
+        try {
+          const { blobs } = await list({
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+            prefix: pathname,
+            limit: 1,
+          });
+          
+          if (blobs.length > 0) {
+            const blob = blobs[0];
+            // Try the url first (signed URL)
+            const response = await fetch(blob.url, {
+              cache: 'no-store',
+            });
+            
+            if (response.ok) {
+              const text = await response.text();
+              const data = JSON.parse(text);
+              return {
+                state: data.state ?? null,
+                updatedAt: data.updatedAt ?? null,
+              };
+            }
+          }
+        } catch (listErr) {
+          console.warn('List method failed:', listErr);
+        }
+        
+        // Method 2: Use head() and downloadUrl
+        try {
+          const blobInfo = await head(pathname, {
+            token: process.env.BLOB_READ_WRITE_TOKEN,
+          });
+          
+          // Try both url and downloadUrl
+          const urls = [blobInfo.url, blobInfo.downloadUrl].filter(Boolean);
+          
+          for (const url of urls) {
+            try {
+              const response = await fetch(url, {
+                cache: 'no-store',
+                headers: {
+                  'Accept': 'application/json',
+                },
+              });
+              
+              if (response.ok) {
+                const text = await response.text();
+                const data = JSON.parse(text);
+                return {
+                  state: data.state ?? null,
+                  updatedAt: data.updatedAt ?? null,
+                };
+              }
+            } catch (fetchErr) {
+              // Try next URL
+              continue;
+            }
+          }
+        } catch (headErr) {
+          console.warn('Head method failed:', headErr);
+        }
+        
+        // If all methods failed, throw error
+        throw new Error('All download methods failed');
+        
+      } catch (err) {
+        lastError = err;
+        // Wait before retry (exponential backoff)
+        if (attempt < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 500));
+        }
       }
-      
-      return {
-        state: data.state ?? null,
-        updatedAt: data.updatedAt ?? null,
-      };
-    } catch (err) {
-      // Re-throw with more context
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`Failed to download blob from ${pathname}: ${message}`);
     }
+    
+    // Re-throw with more context
+    const message = lastError instanceof Error ? lastError.message : String(lastError);
+    throw new Error(`Failed to download blob from ${pathname} after ${maxRetries} attempts: ${message}`);
   };
 
   try {
@@ -175,17 +226,24 @@ async function setBlobState(state) {
 export default async function handler(req, res) {
   try {
     if (req.method === 'GET') {
-      const data = await getBlobState();
-      
-      // Validate retrieved data before returning
-      if (data.state) {
-        if (!Array.isArray(data.state.employees) || data.state.employees.length === 0) {
-          console.warn('Retrieved state has invalid employees, returning null');
-          return json(res, 200, { state: null, updatedAt: null });
+      try {
+        const data = await getBlobState();
+        
+        // Validate retrieved data before returning
+        if (data.state) {
+          if (!Array.isArray(data.state.employees) || data.state.employees.length === 0) {
+            console.warn('Retrieved state has invalid employees, returning null');
+            return json(res, 200, { state: null, updatedAt: null });
+          }
         }
+        
+        return json(res, 200, data);
+      } catch (err) {
+        // If blob fetch fails, return empty state instead of 500 error
+        // This allows the client to initialize with default data
+        console.warn('Failed to fetch blob state, returning empty:', err);
+        return json(res, 200, { state: null, updatedAt: null });
       }
-      
-      return json(res, 200, data);
     }
 
     if (req.method === 'POST') {
