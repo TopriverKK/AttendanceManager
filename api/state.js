@@ -1,4 +1,4 @@
-import { put, head } from '@vercel/blob';
+import { put, head, download } from '@vercel/blob';
 
 // Prefer a namespaced pathname to avoid collisions.
 // We keep backward-compat by reading the legacy key as a fallback.
@@ -92,63 +92,50 @@ async function getBlobState() {
     }
   };
 
-  const tryHeadThenFetch = async (pathname) => {
+  const tryDownload = async (pathname) => {
     // Check if token is available
     if (!process.env.BLOB_READ_WRITE_TOKEN) {
       throw new Error('BLOB_READ_WRITE_TOKEN is not configured. Please set up Vercel Blob storage.');
     }
 
-    const blobInfo = await head(pathname);
-    const uploadedAtValue = (() => {
-      try {
-        const date = blobInfo.uploadedAt instanceof Date ? blobInfo.uploadedAt : new Date(blobInfo.uploadedAt);
-        const t = date.getTime();
-        return Number.isFinite(t) ? t : Date.now();
-      } catch {
-        return Date.now();
-      }
-    })();
-
-    const rawCandidates = [blobInfo.url, blobInfo.downloadUrl].filter(Boolean).map(normalizePublicBlobUrl);
-    const candidates = rawCandidates.map((u) => withCacheBust(u, uploadedAtValue));
-    let lastStatus = null;
-    let lastText = '';
-
-    for (const fetchUrl of candidates) {
-      const response = await fetch(fetchUrl, {
-        cache: 'no-store',
-        headers: {
-          Accept: 'application/json,text/plain;q=0.9,*/*;q=0.8',
-        },
+    try {
+      // Use Vercel Blob SDK's download method which handles authentication internally
+      const { body } = await download(pathname, {
+        token: process.env.BLOB_READ_WRITE_TOKEN,
       });
-      if (response.ok) {
-        let data;
-        try {
-          data = await response.json();
-        } catch {
-          const text = await response.text();
-          throw new Error(`Blob did not return JSON (first 120 chars): ${text.slice(0, 120)}`);
-        }
-        return {
-          state: data.state ?? null,
-          updatedAt: data.updatedAt ?? null,
-        };
+      
+      // Convert ReadableStream to text
+      const chunks = [];
+      const reader = body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
       }
-      lastStatus = `${response.status} ${response.statusText}`;
+      const buffer = Buffer.concat(chunks);
+      const text = buffer.toString('utf-8');
+      
+      let data;
       try {
-        lastText = await response.text();
+        data = JSON.parse(text);
       } catch {
-        lastText = '';
+        throw new Error(`Blob did not return JSON (first 120 chars): ${text.slice(0, 120)}`);
       }
-      // Try next candidate for 403/404 and similar.
+      
+      return {
+        state: data.state ?? null,
+        updatedAt: data.updatedAt ?? null,
+      };
+    } catch (err) {
+      // Re-throw with more context
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to download blob from ${pathname}: ${message}`);
     }
-
-    throw new Error(`Failed to fetch blob: ${lastStatus ?? 'unknown'}${lastText ? ` (${lastText.slice(0, 120)})` : ''}`);
   };
 
   try {
     // First try the namespaced key.
-    return await tryHeadThenFetch(STATE_ID);
+    return await tryDownload(STATE_ID);
   } catch (err) {
     // If it's a simple "not found", fall back to legacy key.
     const message = err instanceof Error ? err.message : String(err);
@@ -157,7 +144,7 @@ async function getBlobState() {
   }
 
   try {
-    return await tryHeadThenFetch(LEGACY_STATE_ID);
+    return await tryDownload(LEGACY_STATE_ID);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const notFound = /not\s*found|404/i.test(message);
